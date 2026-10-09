@@ -7,7 +7,7 @@ python -m ekonte.omr 入力.pdf 出力フォルダ
   2. 向き判定ドットで上下（90°回転も）を決める
   3. 射影変換で用紙座標→画像座標の対応を求め、傾き・ずれ・縮小を補正
   4. 各マークの中心部の黒の割合で「塗った・薄い・塗っていない」を判定
-  5. 描画枠を座標で切り出す
+  5. 描画枠を座標で切り出す（枠の中に色があればカラーのまま、なければ白黒）
 判定に迷ったページは 出力フォルダ/要確認/ にマーク欄の画像を保存する。
 """
 import json, math, os, sys
@@ -28,6 +28,8 @@ FILLED = 0.40         # 白紙からの濃さの増分がこれ以上 → 塗っ
 FAINT = 0.08          # これ以上 FILLED 未満 → 薄い（要確認）
 DOT_MIN = 0.45        # 向き判定ドットの濃さ
 SAMPLE_R = 0.6        # 枠線を拾わないよう、半径の60%以内だけを見る
+COLOR_LEVEL = 40      # 彩度（RGBの最大−最小）がこれより大きい画素を「色」とみなす。スキャンのわずかな色むらは超えない
+COLOR_SHARE = 0.002   # 描画枠の中で「色」の画素がこの割合を超えたら、カラーの絵として切り出す
 
 
 # ---------- 1. 位置合わせマーク ----------
@@ -189,6 +191,18 @@ def read_marks(ink, H):
 
 # ---------- 5. 座標による切り出し ----------
 
+def has_color(rgb, H, x, y, w, h, step=4):
+    """用紙上の矩形（左下原点）の中に色があるか。間引いて見るので速い。"""
+    corners = [to_top_left(px, py) for px in (x, x + w) for py in (y, y + h)]
+    pts = apply(H, corners)
+    x0, y0 = np.maximum(np.floor(pts.min(axis=0)).astype(int), 0)
+    x1, y1 = np.ceil(pts.max(axis=0)).astype(int)
+    a = np.asarray(rgb)[y0:y1:step, x0:x1:step].astype(np.int16)
+    if a.size == 0:
+        return False
+    return float(((a.max(axis=2) - a.min(axis=2)) > COLOR_LEVEL).mean()) > COLOR_SHARE
+
+
 def crop(img, H, x, y, w, h):
     """用紙上の矩形（左下原点）を、傾きを補正して切り出す。"""
     left, top = x, PAGE_H - y - h
@@ -209,14 +223,16 @@ class PageResult:
     orientation: str = ""
     format: str = "横"              # 用紙の種類（layout.FORMATS のキー）。縦型の印の有無で決める
     marks: dict = field(default_factory=dict)
-    picture: Image.Image = None     # 描画枠の中（傾き補正済み）
+    color: bool = False             # 描画枠の中に色があり、カラーで切り出したか
+    picture: Image.Image = None     # 描画枠の中（傾き補正済み。カラーなら RGB、白黒なら L）
     mark_area: Image.Image = None   # マーク欄（人が確認する用）
 
 
 def read_page(page, index):
     """pdfium のページ1枚を読む。"""
     scale = min(RENDER_SCALE, MAX_RENDER_PX / max(*page.get_size(), 1))
-    img = page.render(scale=scale, draw_annots=True, fill_color=(255, 255, 255, 255)).to_pil().convert("L")
+    rgb = page.render(scale=scale, draw_annots=True, fill_color=(255, 255, 255, 255)).to_pil()
+    img = rgb.convert("L")  # マークの読み取りは白黒で行う
     gray = np.asarray(img)
     ink = to_ink(gray)
     r = PageResult(page=index + 1)
@@ -231,7 +247,9 @@ def read_page(page, index):
     r.format = "縦" if score >= DOT_MIN / 2 else "横"
     r.status = "要確認" if r.warnings else "OK"
     m, f, a = 3, FRAMES[r.format], MARK_AREA  # m: 描画枠の線を含めないよう内側を切り抜く
-    r.picture = crop(img, H, f["x"] + m, f["y"] + m, f["w"] - m * 2, f["h"] - m * 2)
+    frame = (f["x"] + m, f["y"] + m, f["w"] - m * 2, f["h"] - m * 2)
+    r.color = has_color(rgb, H, *frame)
+    r.picture = crop(rgb.convert("RGB") if r.color else img, H, *frame)
     r.mark_area = crop(img, H, a["x"], a["y"], a["w"], a["h"])
     return r
 

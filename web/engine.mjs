@@ -47,9 +47,9 @@ class Engine {
     return JSON.parse(call(() => this.web.check(JSON.stringify(names))));
   }
 
-  /** 絵コンテPDFと香盤表Excelを作る → {pages, cuts, warnings, pdf, kouban, images} */
-  exportPdf(rows, fmt, withImages) {
-    const result = JSON.parse(call(() => this.web.export(JSON.stringify(rows), fmt, withImages)));
+  /** 絵コンテPDFと香盤表Excelを作る → {pages, cuts, warnings, pdf, kouban, images}。onProgress(済んだカット数, 全カット数) */
+  exportPdf(rows, fmt, withImages, onProgress = null) {
+    const result = JSON.parse(call(() => this.web.export(JSON.stringify(rows), fmt, withImages, onProgress)));
     const output = (kind) => takeBytes(call(() => this.web.output(kind)));
     return { ...result, pdf: output("pdf"), kouban: output("kouban"), images: output("images") };
   }

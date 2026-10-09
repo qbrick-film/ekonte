@@ -70,7 +70,7 @@ function engineFailed(message) {
   showEngine("error", "準備に失敗しました");
   for (const job of pending.values()) job.reject(new Error(message));
   pending.clear();
-  alertDialog("準備に失敗しました", `${message}\n\nChrome・Edge・Safari・Firefox の最新版で開き直してください。\nネットがない場所では、アプリ版（下の「アプリ版」から）を使えます。`);
+  alertDialog("準備に失敗しました", `${message}\n\nChrome・Edge・Safari・Firefox の最新版で開き直してください。`);
 }
 
 // ---------- ① 読み取り ----------
@@ -137,7 +137,7 @@ function addResult(page) {
   const { picture, mark, total, ...info } = page;
   const i = results.length;
   results.push(info);
-  images.push({ picture: blobUrl(picture, "image/png"), mark: blobUrl(mark, "image/png") });
+  images.push({ picture: blobUrl(picture, info.color ? "image/jpeg" : "image/png"), mark: blobUrl(mark, "image/png") });
   const input = el("input", { type: "text", value: info.name ?? "", placeholder: "例: 2-3 / 2-3a（空欄で除外）", spellcheck: false, autocomplete: "off" });
   input.setAttribute("aria-label", `p${info.page} の番号`);
   tbody.append(el("tr", {},
@@ -368,13 +368,19 @@ async function exportPdf() {
   if (!rows.length && !excel.book) return alertDialog(APP_NAME, "絵コンテに入れるカットがありません。");
   if (excel.book && !(await confirmCutCheck(rows.map(([, name]) => cutName(name))))) return;
   busy($("b-export"), true, "書き出し中…");
+  const bar = $("progress");
+  bar.hidden = false;
+  bar.removeAttribute("value");
   let r;
   try {
-    r = await call("export", { rows, fmt: sheetFormat(), withImages: $("export-images").checked });
+    r = await call("export", { rows, fmt: sheetFormat(), withImages: $("export-images").checked }, {
+      onProgress: ({ done, total }) => Object.assign(bar, { max: total, value: done }),
+    });
   } catch (e) {
     return alertDialog("書き出しエラー", e.message);
   } finally {
     busy($("b-export"), false);
+    bar.hidden = true;
   }
   unsaved = false;
   const excluded = statuses.filter((s) => s === "除外" || s === "エラー").length;

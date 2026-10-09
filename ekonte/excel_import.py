@@ -25,6 +25,9 @@ class Book:
     title: str = ""                              # 香盤表のタイトル・撮影日（書き出す香盤表に引き継ぐ）
     date: str = ""
     extra: list = field(default_factory=list)    # 香盤表のそのほかの列（登場人物など）: [(見出し, すぐ上の段の文字（役者名など）, {S: 値})]
+    kouban_items: dict = field(default_factory=dict)  # 香盤表の小道具・機材の列に書いたもの {S: {"props": [...], "gear": [...]}}
+    lines: tuple = ({}, {})                      # カット表に書いた行のまま (シーン全体の行 {S: [行]}, カットの行 {(S, C): [行]})
+    cams: list = field(default_factory=list)     # カット表のカメラの列の名前（"A", "B", …）
     has_kouban: bool = False
     has_cuts: bool = False
 
@@ -113,7 +116,7 @@ def load_book(path):
         raise ValueError("香盤表・カット表のシートが見つかりません。シート名を「香盤表」「カット表」にしてください")
     book = Book()
     if cuts is not None:
-        book.cuts, book.sources = _read_cut_table(cuts)
+        book.cuts, book.sources, book.lines, book.cams = _read_cut_table(cuts)
         book.has_cuts = True
     if kouban is not None:
         _read_kouban(kouban, book)
@@ -162,6 +165,7 @@ def _read_kouban(ws, book):
             if idx and _text(get(idx)):
                 by_scene, _ = book.sources.setdefault(k, (defaultdict(list), defaultdict(list)))
                 by_scene[s].append(_text(get(idx)))
+                book.kouban_items.setdefault(s, {}).setdefault(k, []).append(_text(get(idx)))
         for idx, _, _ in extra:
             if _text(get(idx)):
                 values[idx][s] = _text(get(idx))
@@ -202,6 +206,9 @@ def _read_cut_table(ws):
     戻り値:
       cuts:    {(S, C): {"action": [...], "scenario": [...], "time": [...]}}  表に書いた順
       sources: compose の NOTE_ITEMS と同じ形 {キー: (シーン単位 {S: [..]}, カット単位 {(S, C): [..]})}
+      lines:   書いた行のまま (シーン全体の行 {S: [行]}, カットの行 {(S, C): [行]})。行 = {列のキー: 値, "cams": {カメラ: レンズ}}
+               書き出す香盤表の「カット一覧」を、カット表と同じ形にするのに使う
+      cams:    カメラの列の名前（"A", "B", …）
     """
     header_row, names = _find_header(ws, SCENE_HEADERS)
     c_scene = _col(names, *SCENE_HEADERS)
@@ -214,6 +221,7 @@ def _read_cut_table(ws):
 
     cuts = {}
     sources = {k: (defaultdict(list), defaultdict(list)) for k in ("props", "gear", "note", "camera")}
+    lines = (defaultdict(list), defaultdict(list))
     target = None  # 直前の行の対象: ("scene", S) / ("cut", (S, C))
     for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
         cell = lambda idx: row[idx - 1] if idx and idx <= len(row) else None
@@ -237,6 +245,9 @@ def _read_cut_table(ws):
         else:
             continue  # C だけ書いた行は不正なので無視
         kind, key = target
+        line = {k: _fmt_time(v) if k == "time" else v for k, v in values.items()}
+        line["cams"] = dict(cam_values)
+        lines[0 if kind == "scene" else 1][key].append(line)
         for k, v in values.items():  # CUT_FIELDS の順なので、同じ行なら ACTION → SE の順に入る
             if k == "se":
                 if kind == "cut":
@@ -249,7 +260,7 @@ def _read_cut_table(ws):
         for label, lens in cam_values:
             item = f"{label} {lens}".strip()
             (sources["camera"][1][key] if kind == "cut" else sources["camera"][0][key]).append(item)
-    return cuts, sources
+    return cuts, sources, lines, [label for label, _ in cams]
 
 
 def _fmt_time(v):

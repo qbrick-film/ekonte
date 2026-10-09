@@ -2,15 +2,14 @@
 
   香盤表     1行1シーン。元の香盤表（場面・L/S・D/N・ロケ地・登場人物など・備考）に、
              カット表から集めたカット数・時間・小道具・カメラ・機材を足す。最後の行に合計
-  カット一覧 1行1カット。絵コンテから PICTURE を除いたもの（S・C・ACTION/SE・SCENARIO・TIME・NOTE）
+  カット一覧 カット表と同じ形（ACTION・SE・SCENARIO・TIME・小道具・カメラ・機材・NOTE の列、書いた行のまま）。
+             シーンの頭にシーンの行（場面・L/S・D/N・ロケ地・備考と、シーン全体の小道具など）。カット絵だけのカットも載せる
 
 中身は compose.plan() の結果から作るので、絵コンテPDFと食い違わない。
 直すときは元の Excel（香盤表・カット表）を直して書き出し直す（このファイルは読み込めないようにしてある）。
 """
 import os, re
 from openpyxl import Workbook
-from openpyxl.cell.rich_text import CellRichText, TextBlock
-from openpyxl.cell.text import InlineFont
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from .compose import without
@@ -21,6 +20,8 @@ BORDER = Border(top=THIN, bottom=THIN, left=THIN, right=THIN)
 SCENE_TOP = Border(top=Side(style="medium", color="555555"), bottom=THIN, left=THIN, right=THIN)  # シーンの区切り
 HEAD_FILL = PatternFill("solid", fgColor="DDDDDD")
 TOTAL_FILL = PatternFill("solid", fgColor="F2F2F2")
+SCENE_FILL = PatternFill("solid", fgColor="EAF1FB")  # シーンの行（カット表のテンプレートと同じ色）
+CONT_FILL = PatternFill("solid", fgColor="F5F5F5")   # 続きの行
 LEFT = Alignment(wrap_text=True, vertical="top")
 CENTER = Alignment(wrap_text=True, vertical="top", horizontal="center")
 GATHER = [("props", "小道具", 24), ("camera", "カメラ", 18), ("gear", "機材", 18)]  # カット表からシーンごとにまとめるもの
@@ -38,7 +39,7 @@ def write(path, rows, book, source=None):
     """rows: compose.plan() の結果。book: 読み込んだ香盤表・カット表。source: 元の Excel の場所（ファイル名を書き添える）"""
     wb = Workbook()
     _scenes(wb.active, rows, book, source)
-    _cuts(wb.create_sheet("カット一覧"), rows)
+    _cuts(wb.create_sheet("カット一覧"), rows, book)
     wb.properties.subject = OUTPUT_MARK
     wb.properties.creator = "絵コンテ作成ソフト"
     wb.save(path)
@@ -151,34 +152,65 @@ def _scenes(ws, rows, book, source):
     _print_setup(ws, f"{head}:{head}")
 
 
-def _note(lines):
-    """NOTE欄の行を1つのセルに。シーンの情報の行は絵コンテと同じく太字にする。"""
-    if not any(bold for _, bold in lines):
-        return "\n".join(t for t, _ in lines)
-    rich = CellRichText()
-    for i, (text, bold) in enumerate(lines):
-        text = ("\n" if i else "") + text
-        rich.append(TextBlock(InlineFont(b=True), text) if bold else text)
-    return rich
+def _cuts(ws, rows, book):
+    """カット表と同じ形の一覧。カットは絵コンテと同じ順（番号順）、各カットの行は書いたとおりに並べる。"""
+    cams = book.cams or ["A"]
+    columns = [("S", "s", 5), ("C", "c", 6), ("ACTION", "action", 30), ("SE", "se", 14), ("SCENARIO", "scenario", 34),
+               ("TIME", "time", 7), ("小道具", "props", 16)]
+    columns += [(f"カメラ{label}", ("cams", label), 11) for label in cams]
+    columns += [("機材", "gear", 14), ("NOTE", "note", 26)]
+    _head(ws, 1, [(name, width) for name, _, width in columns])
+    scene_lines, cut_lines = book.lines
+    by_scene = {}
+    for r in rows:
+        by_scene.setdefault(r.cut["s"], []).append(r)
+    r_out, total = 2, None
 
+    def put(line, fill, top):
+        nonlocal r_out
+        for j, (_, key, _) in enumerate(columns, 1):
+            v = line.get("cams", {}).get(key[1], "") if isinstance(key, tuple) else line.get(key, "")
+            c = _cell(ws, r_out, j, _number(v) if key in ("s", "c", "time") else (v or None),
+                      CENTER if key in ("s", "c", "time") else LEFT, SCENE_TOP if top else BORDER)
+            if fill:
+                c.fill = fill
+        r_out += 1
 
-def _cuts(ws, rows):
-    columns = [("S", 5), ("C", 6), ("ACTION/SE", 40), ("SCENARIO", 40), ("TIME", 7), ("NOTE", 48)]
-    _head(ws, 1, columns)
-    total = None
-    for i, row in enumerate(rows, 2):
-        cut = row.cut
-        values = [_number(cut["s"]), _number(cut["c"]), "\n".join(row.action), "\n".join(row.scenario),
-                  _number(row.time) if row.time else None, _note(row.note)]
-        for j, v in enumerate(values, 1):
-            _cell(ws, i, j, v, CENTER if j in (1, 2, 5) else LEFT, SCENE_TOP if row.first else BORDER)
-        t = _seconds(row.time)
-        if t is not None:
-            total = (total or 0) + t
-    r = len(rows) + 2
+    for s in sorted(set(by_scene) | set(scene_lines) | set(book.kouban), key=_scene_order):
+        # シーンの行：場面・L/S・D/N・ロケ地（ACTION の列）、カット表のシーン全体の行、香盤表の小道具・機材、備考（NOTE の列）
+        info = book.kouban.get(s, {})
+        head = " / ".join(v for v in (info.get("bamen"), info.get("ls"), info.get("dn")) if v)
+        title = "　".join(x for x in (f"【{head}】" if head else "", f"ロケ地: {info['loca']}" if info.get("loca") else "") if x)
+        lines = [dict(line) for line in scene_lines.get(s, [])]
+        for k, values in book.kouban_items.get(s, {}).items():
+            written = {line.get(k) for line in lines}
+            lines += [{k: v} for v in values if v not in written]
+        if title:
+            if lines and not lines[0].get("action"):
+                lines[0]["action"] = title
+            else:
+                lines.insert(0, {"action": title})
+        items = {x for r in by_scene.get(s, []) for v in r.items.values() for x in v}
+        items |= {x for k, (by_s, _) in book.sources.items() for x in by_s.get(s, [])}
+        biko = without(info.get("biko", ""), items)  # 小道具などと同じものは備考に重ねない
+        if biko:
+            free = next((line for line in lines if not line.get("note")), None)
+            if free is None:
+                lines.append(free := {})
+            free["note"] = f"備考: {biko}"
+        for i, line in enumerate(lines or [{}]):
+            put({**line, "s": s} if i == 0 else line, SCENE_FILL, i == 0)
+        # カット：書いた行のまま（カット表にないカットは S・C だけ）
+        for r in by_scene.get(s, []):
+            cut = r.cut
+            for i, line in enumerate(cut_lines.get((cut["s"], cut["c"])) or [{}]):
+                put({**line, "s": cut["s"], "c": cut["c"]} if i == 0 else line, CONT_FILL if i else None, False)
+            t = _seconds(r.time)
+            if t is not None:
+                total = (total or 0) + t
     for j in range(1, len(columns) + 1):
-        _cell(ws, r, j, None, CENTER).fill = TOTAL_FILL
-    ws.cell(r, 3, "合計").font = Font(bold=True)
-    ws.cell(r, 5, total).font = Font(bold=True)
+        _cell(ws, r_out, j, None, CENTER).fill = TOTAL_FILL
+    ws.cell(r_out, 3, "合計").font = Font(bold=True)
+    ws.cell(r_out, 6, total).font = Font(bold=True)
     ws.freeze_panes = "C2"
     _print_setup(ws, "1:1")

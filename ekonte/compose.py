@@ -22,7 +22,7 @@ CUT_RE = re.compile(r"^(\d+)-(\d+)([a-j]?)$")
 
 
 def make_cut(name, image=None):
-    """番号（"2-3a"）と画像（ファイルパス・PIL画像・None）からカットを作る。"""
+    """番号（"2-3a"）と画像（ファイルパス・PIL画像・PNG の入ったファイルのようなもの・None）からカットを作る。"""
     m = CUT_RE.match(name)
     if not m:
         raise ValueError(f"番号の形式が正しくありません: {name}")
@@ -325,13 +325,14 @@ def check_cuts(picture_names, excel_path):
 COL_LABEL = {"action": "ACTION/SE", "scenario": "SCENARIO", "time": "TIME", "note": "NOTE"}
 
 
-def compose(cuts, out, excel_path=None, fmt="横", kouban_out=None):
+def compose(cuts, out, excel_path=None, fmt="横", kouban_out=None, progress=None):
     """絵コンテPDFを書き出す。
 
     cuts: make_cut() の結果のリスト（カット絵）。カット表にあってカット絵がないカットも、PICTURE を空けて載せる。
     excel_path: 香盤表・カット表のExcel（1つのファイル。省略可）
     fmt: "横"（1ページ6カット）/ "縦"（9:16、1ページ4カット）。
     kouban_out: 指定すると、同じ中身の香盤表（Excel）も書き出す
+    progress(済んだカット数, 全カット数): 指定すると、1カット描くごとに呼ぶ
     番号順に並べ、シーンごとに改ページして配置する。
     戻り値: {"pages": ページ数, "cuts": カット数, "warnings": [...]}
     """
@@ -343,7 +344,7 @@ def compose(cuts, out, excel_path=None, fmt="横", kouban_out=None):
     layout = LAYOUTS[fmt]
     c = canvas.Canvas(out, pagesize=layout.pagesize)
     page, slot = 0, layout.per_page
-    for row in rows:
+    for done, row in enumerate(rows, 1):
         # シーンが変わったら、段が余っていても次のページから始める
         if row.first or slot == layout.per_page:
             if page:
@@ -358,6 +359,8 @@ def compose(cuts, out, excel_path=None, fmt="横", kouban_out=None):
         for key in draw_cut(c, layout, slot, cut, texts):
             warnings.append(f"{cut['s']}-{cut['c']} の {COL_LABEL[key]} が長すぎて欄に収まりません（No.{page}）")
         slot += 1
+        if progress:
+            progress(done, len(rows))
     c.save()
     if kouban_out:
         from .kouban import write

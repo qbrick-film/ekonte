@@ -25,7 +25,7 @@ const COMMANDS = {
   setExcel: (engine, { key, data, name }) => engine.setExcel(key, data, name),
   clearExcel: (engine, { key }) => engine.clearExcel(key),
   check: (engine, { names }) => engine.check(names),
-  export: (engine, { rows, fmt, withImages }) => engine.exportPdf(rows, fmt, withImages),
+  export: (engine, { rows, fmt, withImages }, notify) => engine.exportPdf(rows, fmt, withImages, (done, total) => notify({ done, total })),
   sheet: (engine, { pages, fmt }) => engine.sheet(pages, fmt),
 };
 
