@@ -20,3 +20,7 @@ Check_List_テンプレート(ピンマイク有).xlsx
 
 # macOS
 .DS_Store
+
+# ブラウザ版の組み立て結果と、取り寄せた部品（web/build.py）
+dist-web/
+web/.cache/

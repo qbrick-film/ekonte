@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ja" data-version="__VERSION__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; worker-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="description" content="手描きのカット絵PDFと、香盤表・カット表のExcelから絵コンテのPDFを作ります。処理はすべてブラウザの中で行います。">
+<title>絵コンテ作成ソフト</title>
+<link rel="icon" href="icon.svg?v=__VERSION__" type="image/svg+xml">
+<link rel="stylesheet" href="style.css?v=__VERSION__">
+<script type="module" src="app.mjs?v=__VERSION__"></script>
+</head>
+<body>
+<div class="app">
+  <header class="masthead">
+    <h1>絵コンテ作成ソフト</h1>
+    <span class="version">v__VERSION__ ブラウザ版</span>
+    <span class="engine busy" id="engine" role="status"><span class="dot"></span><span id="engine-text">準備しています…</span></span>
+    <button type="button" class="btn ghost" id="b-guide" title="画面の使い方をもう一度表示する">？ 使い方</button>
+  </header>
+
+  <section class="toolbar panel" aria-label="① 読み取りと用紙">
+    <button type="button" class="btn primary" id="b-open">① カット絵PDFを読み取る…</button>
+    <input type="file" id="f-pdf" accept=".pdf,application/pdf" hidden>
+    <span class="pdf-label muted" id="pdf-label">カット絵PDFを選んでください</span>
+    <span class="sheet-tools">
+      <label for="sheet-pages">用紙</label>
+      <input type="number" id="sheet-pages" min="1" max="999" value="20" inputmode="numeric">
+      <span>ページ</span>
+      <select id="sheet-format" aria-label="用紙の種類" title="縦 9:16 は縦型動画用。読み取るときは用紙の種類を自動で判別します">
+        <option value="横">横</option>
+        <option value="縦">縦 9:16</option>
+      </select>
+      <button type="button" class="btn" id="b-sheet">カット絵用紙を作成…</button>
+    </span>
+    <button type="button" class="btn" id="b-samples" title="記入例（カット絵・香盤表・カット表・絵コンテ）と空のExcelを保存する">サンプル・テンプレート…</button>
+  </section>
+
+  <progress id="progress" hidden></progress>
+
+  <main class="review">
+    <section class="results panel" aria-label="② 読み取り結果">
+      <div class="bar">
+        <h2>② 読み取り結果 <span class="hint">番号はその場で書き換えられます</span></h2>
+        <label class="check"><input type="checkbox" id="only-review"> 要確認・エラーだけ表示</label>
+      </div>
+      <div class="table-wrap">
+        <table id="table">
+          <thead><tr><th class="c-page">ページ</th><th class="c-name">番号</th><th class="c-status">状態</th><th>内容</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="empty" id="empty">① でカット絵PDFを選ぶと、ここに1ページずつ結果が出ます。<br>PDFをこの画面にドラッグしても読み取れます。</p>
+      </div>
+      <div class="bar">
+        <button type="button" class="btn" id="b-confirm" title="要確認の行で、読み取った番号が正しいときに押す">この番号で確定（Enter）</button>
+        <button type="button" class="btn" id="b-next">次の要確認へ</button>
+        <span class="summary muted" id="summary"></span>
+      </div>
+    </section>
+    <section class="preview" aria-label="選んだページの画像">
+      <figure>
+        <figcaption>カット絵</figcaption>
+        <div class="frame" id="v-picture"><span>表の行を選ぶと、ここにカット絵が出ます</span></div>
+      </figure>
+      <figure>
+        <figcaption>マーク欄</figcaption>
+        <div class="frame" id="v-mark"><span>読み取った番号のマーク欄</span></div>
+      </figure>
+    </section>
+  </main>
+
+  <section class="excel panel" id="excel-box" aria-label="③ 絵コンテに入れるExcel">
+    <h2>③ 絵コンテに入れるExcel <span class="hint">どれも省略可。Googleスプレッドシートは .xlsx でダウンロードして選ぶ</span></h2>
+    <div class="pick" data-key="kouban">
+      <span class="label">香盤表</span>
+      <span class="info muted">未選択</span>
+      <span class="actions">
+        <button type="button" class="btn choose">選択…</button><button type="button" class="btn clear">解除</button>
+      </span>
+      <input type="file" accept=".xlsx,.xlsm" hidden>
+    </div>
+    <div class="pick" data-key="cuts">
+      <span class="label">カット表</span>
+      <span class="info muted">未選択</span>
+      <span class="actions">
+        <a class="btn" href="samples/カット表_記入例.xlsx" download="カット表.xlsx" title="記入例つきの空のExcelを保存する">テンプレート…</a>
+        <button type="button" class="btn choose">選択…</button><button type="button" class="btn clear">解除</button>
+      </span>
+      <input type="file" accept=".xlsx,.xlsm" hidden>
+    </div>
+    <div class="pick" data-key="props">
+      <span class="label">小道具（個別のExcel）</span>
+      <span class="info muted">未選択</span>
+      <span class="actions">
+        <button type="button" class="btn choose">選択…</button><button type="button" class="btn clear">解除</button>
+      </span>
+      <input type="file" accept=".xlsx,.xlsm" hidden>
+    </div>
+    <div class="pick" data-key="equipment">
+      <span class="label">機材（個別のExcel）</span>
+      <span class="info muted">未選択</span>
+      <span class="actions">
+        <button type="button" class="btn choose">選択…</button><button type="button" class="btn clear">解除</button>
+      </span>
+      <input type="file" accept=".xlsx,.xlsm" hidden>
+    </div>
+  </section>
+
+  <section class="export">
+    <label class="check"><input type="checkbox" id="export-images"> カット絵の画像（2-3.png など）もZipで保存する</label>
+    <button type="button" class="btn primary big" id="b-export">④ 絵コンテPDFを書き出す…</button>
+  </section>
+
+  <footer class="muted">
+    <span>処理はすべてこのブラウザの中で行います。カット絵やExcelは、どこにも送られません。</span>
+    <a href="https://github.com/__REPO__/releases/latest" target="_blank" rel="noopener">アプリ版（ネットがない場所用）</a>
+    <a href="https://github.com/__REPO__" target="_blank" rel="noopener">GitHub</a>
+  </footer>
+  <noscript><p class="panel">このページを使うには JavaScript を有効にしてください。</p></noscript>
+</div>
+
+<dialog id="dlg" aria-labelledby="dlg-title">
+  <h3 id="dlg-title"></h3>
+  <p id="dlg-text"></p>
+  <div class="buttons" id="dlg-buttons"></div>
+</dialog>
+
+<dialog id="samples-dlg" aria-labelledby="samples-title">
+  <h3 id="samples-title">サンプル・テンプレート</h3>
+  <p>1つずつ「保存」するか、「すべてZipで保存」でまとめて保存できます。<br>記入例は同じ作品の一式で、そのまま①〜④を試せます。</p>
+  <div id="samples-list"></div>
+  <div class="buttons">
+    <a class="btn" id="samples-zip" href="samples/" download>すべてZipで保存</a>
+    <button type="button" class="btn primary" id="samples-close">閉じる</button>
+  </div>
+</dialog>
+
+<div class="guide" id="guide" hidden></div>
+</body>
+</html>

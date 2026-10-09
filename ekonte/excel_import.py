@@ -2,12 +2,22 @@
 
 見出し行は列名で自動検出するので、列の並びや開始行が変わっても読める。
 """
-import re
+import re, zipfile
 from collections import defaultdict
 import openpyxl
+from openpyxl.utils.exceptions import InvalidFileException
 
 SCENE_HEADERS = ("#S", "S#", "シーン", "S")
 CUT_HEADERS = ("カット", "C", "C#")
+
+
+def _open(path):
+    """Excelを開く。開けなければ、理由が分かる日本語のエラーにする。"""
+    try:
+        return openpyxl.load_workbook(path, data_only=True)
+    except (zipfile.BadZipFile, InvalidFileException) as e:
+        raise ValueError("Excel（.xlsx）として開けません。古い形式（.xls）などのファイルなら、"
+                         "Excel で .xlsx 形式で保存し直してから選んでください") from e
 
 
 def _norm(v):
@@ -48,7 +58,7 @@ def _col(names, *candidates, prefix=False):
 
 def load_kouban(path):
     """香盤表 → {シーン: {場面, ls, dn, loca, biko}}"""
-    ws = openpyxl.load_workbook(path, data_only=True).active
+    ws = _open(path).active
     header_row, names = _find_header(ws, SCENE_HEADERS)
     cols = dict(
         scene=_col(names, *SCENE_HEADERS),
@@ -78,7 +88,7 @@ def _load_by_cut(path, fields, combine=None):
     戻り値: {キー: (シーン単位 {S: [..]}, カット単位 {(S, C): [..]})}
     カット欄が空の行はシーン全体に適用する。
     """
-    ws = openpyxl.load_workbook(path, data_only=True).active
+    ws = _open(path).active
     header_row, names = _find_header(ws, SCENE_HEADERS)
     c_scene = _col(names, *SCENE_HEADERS)
     c_cut = _col(names, *CUT_HEADERS)
@@ -144,7 +154,7 @@ def load_cut_table(path):
       cuts:    {(S, C): {"action": [...], "scenario": [...], "time": [...]}}  表に書いた順
       sources: compose の NOTE_ITEMS と同じ形 {キー: (シーン単位 {S: [..]}, カット単位 {(S, C): [..]})}
     """
-    wb = openpyxl.load_workbook(path, data_only=True)
+    wb = _open(path)
     ws = wb["カット表"] if "カット表" in wb.sheetnames else wb.worksheets[0]
     header_row, names = _find_header(ws, SCENE_HEADERS)
     c_scene = _col(names, *SCENE_HEADERS)

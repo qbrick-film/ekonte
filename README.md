@@ -2,9 +2,18 @@
 
 PDFに描いた**カット絵**のマークシートを読み取り、香盤表・カット表のExcelと組み合わせて、
 **絵コンテ**（S / C / PICTURE / ACTION/SE / SCENARIO / TIME / NOTE）のPDFを作るソフトです。
-ネット接続は不要で、Windows と Mac で同じ結果になります。
+ブラウザ版とアプリ版があり、中身（読み取り・絵コンテの組み立て）は同じなので、どちらでも同じ絵コンテができます。
 
-## ダウンロード
+## ブラウザで使う（おすすめ）
+
+**https://qbrick-film.github.io/ekonte/** を開くだけで使えます。インストールは要りません。
+
+- 処理はすべてブラウザの中で行います。カット絵やExcelは、どこにも送られません。
+- 初めて開くときだけ、ブラウザで動く Python などを30MBほど読み込みます（数秒〜十数秒）。2回目からは速くなります。
+- Chrome・Edge・Safari・Firefox の最新版で、パソコンから使ってください。
+- 作ったファイルは、ブラウザの「ダウンロード」に保存されます。
+
+## アプリで使う（ネットがない場所用）
 
 右側の **Releases** から、いちばん新しい版の zip をダウンロードします。
 
@@ -24,7 +33,9 @@ PDFに描いた**カット絵**のマークシートを読み取り、香盤表�
 **安全のために**
 
 - アプリは、このリポジトリの Releases からだけ入手してください。ほかの場所で配られているものは、中身がすり替えられているおそれがあります。
+- ブラウザ版の正しいアドレスは `qbrick-film.github.io/ekonte` です。
 - アプリは起動時に、GitHub に新しい版があるかだけを問い合わせます（通信できなければ何もしません）。絵コンテ・カット絵・Excel の中身を外に送ることはありません。
+- ブラウザ版は、上のアドレスのページ以外とは通信しません（ページの設定で禁止しています）。
 
 ## 使い方
 
@@ -40,7 +51,7 @@ PDFに描いた**カット絵**のマークシートを読み取り、香盤表�
 3. **① カット絵PDFを読み取る**：自動で番号を読み取ります。
 4. **② 確認する**：黄色の「要確認」の行だけを確認します（「要確認・エラーだけ表示」で絞り込めます）。
    - 番号が正しい → 「この番号で確定」（Enter）
-   - 番号が違う → 番号をダブルクリックして修正
+   - 番号が違う → 番号を修正（アプリ版はダブルクリックしてから。ブラウザ版はそのまま書き換えられます）
    - 絵コンテに入れないページ → 番号を空欄にする
 5. **③ Excelを選ぶ**（省略可）：**香盤表**（シーンの情報）と**カット表**（カットごとの内容）
    - カット表は「テンプレート…」ボタンで記入例つきのExcelを保存できます。
@@ -117,12 +128,32 @@ python -m ekonte.sample サンプル                                 # 動作確
 |---|---|---|
 | Mac | `./build_mac.sh` | `~/ekonte-build/dist/Ekonte.app` |
 | Windows | `build_windows.bat`（Windows上で実行） | `%USERPROFILE%\ekonte-build\dist\Ekonte\Ekonte.exe` |
-| 全部 | `ekonte/__init__.py` の `__version__` を上げてコミットし、同じ番号のタグ（例 `v0.2.0`）を push | Releases に Mac（Apple シリコン・Intel）・Windows のzip |
-| 全部（公開しない） | GitHub の Actions で「build」を Run workflow | Artifacts に同じzip |
+| 全部 | `ekonte/__init__.py` の `__version__` を上げてコミットし、同じ番号のタグ（例 `v0.2.0`）を push | Releases に Mac（Apple シリコン・Intel）・Windows のzip、GitHub Pages にブラウザ版 |
+| 全部（公開しない） | GitHub の Actions で「build」を Run workflow | Artifacts に同じzipとブラウザ版 |
 
 - 動作確認：`Ekonte --selftest サンプル/カット絵_記入例_スキャン.pdf 出力.pdf`（画面を出さずに読み取り→書き出し→同梱サンプルの保存）
 - Mac で作ったアプリは、作ったMacと同じ種類のCPU（Apple Silicon か Intel）でだけ動きます。
 - 署名をしていないため、他のパソコンで初めて開くときは上の「ダウンロード」の手順で開きます。
+
+### ブラウザ版
+
+画面（`web/`）だけがアプリ版と別で、読み取り・Excel・絵コンテの組み立ては同じ `ekonte/` の Python を、
+ブラウザで動く Python（[Pyodide](https://pyodide.org/)）の上でそのまま動かしています（入口は `ekonte/web.py`）。
+
+```bash
+~/.venvs/ekonte/bin/python web/build.py                    # dist-web/ に組み立てる（そのまま GitHub Pages に置ける）
+node web/test_engine.mjs dist-web /tmp/web-test            # ブラウザ版の中身を Node で動かし、記入例を通す
+~/.venvs/ekonte/bin/python web/compare.py dist-web /tmp/web-test   # デスクトップ版の Python と結果が一致するか比べる
+```
+
+- 手元で開くときは、`dist-web/` を `.mjs` を `text/javascript` で返すサーバーで配信します（ファイルを直接開いても動きません）。
+- 公開はアプリと同じく、タグを push したときに GitHub の自動ビルドで行います（アプリとブラウザ版の確認が両方通ったときだけ、両方を公開）。
+- 部品（Pyodide・numpy・Pillow・pypdfium2・reportlab・openpyxl など）は `web/vendor.json` に場所と指紋（sha256）を固定しています。
+  `web/build.py` は指紋が一致したものだけを使い、ブラウザも読み込むときにもう一度照合します。
+  部品を更新するときは、版・場所・指紋をまとめて書き換え、上の比較が通ることを確かめます（Dependabot は見てくれません）。
+- 初めて公開するときだけ、GitHub のリポジトリで次の2つを設定します。
+  1. Settings → Pages → Build and deployment の Source を「GitHub Actions」にする
+  2. Settings → Environments → github-pages → Deployment branches and tags に、タグ `v*` を追加する
 
 ### iCloud の注意
 
@@ -141,10 +172,17 @@ ekonte/
   excel_import.py      香盤表・カット表・小道具・機材Excelの読み込み
   templates.py         カット表テンプレートの生成
   compose.py           絵コンテPDFの組み立て（横 = 表のレイアウト、縦 = 4カット横並びのレイアウト）
-  gui.py               画面
+  gui.py               画面（アプリ版）
+  web.py               ブラウザ版の入口（ブラウザから届いたファイルを上の処理に渡す）
   fonts.py             埋め込みフォント（BIZ UDゴシック）
   sample.py            動作確認用の記入例の生成
-  samples.py           アプリに同梱するサンプル・テンプレートの一覧（ekonte.spec もここを見る）
+  samples.py           アプリに同梱するサンプル・テンプレートの一覧（ekonte.spec と web/build.py もここを見る）
+web/
+  index.html・style.css・app.mjs   画面（ブラウザ版）
+  worker.mjs・engine.mjs           ブラウザの中で Python を動かす部分（画面が固まらないよう別の流れで動かす）
+  vendor.json          ブラウザ版に入れる部品と指紋
+  build.py             ブラウザ版の組み立て
+  test_engine.mjs・compare.py      動作確認（デスクトップ版と結果が一致するか）
 resources/fonts/       BIZ UDゴシック（SIL Open Font License, OFL.txt）
 サンプル/              記入例PDF・スキャン例PDF・出力例
 ```

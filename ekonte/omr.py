@@ -236,13 +236,22 @@ def read_page(page, index):
     return r
 
 
+def open_pdf(pdf_path):
+    """PDFを開く。開けなければ、理由が分かる日本語のエラーにする。"""
+    try:
+        return pdfium.PdfDocument(pdf_path)
+    except pdfium.PdfiumError as e:
+        reason = "パスワードがかかっています" if "password" in str(e).lower() else "壊れているか、PDFではないファイルです"
+        raise ValueError(f"PDFとして開けません（{reason}）") from e
+
+
 def page_count(pdf_path):
-    return len(pdfium.PdfDocument(pdf_path))
+    return len(open_pdf(pdf_path))
 
 
 def read_pdf(pdf_path):
     """PDFの全ページを順に読み、PageResult を1ページずつ返す。番号の重複も警告する。"""
-    pdf = pdfium.PdfDocument(pdf_path)
+    pdf = open_pdf(pdf_path)
     used, first = {}, None
     for i in range(len(pdf)):
         r = read_page(pdf[i], i)
