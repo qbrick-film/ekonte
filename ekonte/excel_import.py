@@ -1,14 +1,32 @@
-"""香盤表・カット表・小道具・機材のExcelを読み込む。
+"""香盤表・カット表のExcelを読み込む。
 
+1つのファイルに「香盤表」と「カット表」のシートを入れる（どちらか一方だけでもよい）。
+シートは名前で探し、見つからなければ見出しで見分ける（C の列があればカット表、場面・D/N などがあれば香盤表）。
 見出し行は列名で自動検出するので、列の並びや開始行が変わっても読める。
 """
-import re, zipfile
+import datetime, re, zipfile
 from collections import defaultdict
+from dataclasses import dataclass, field
 import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
 
 SCENE_HEADERS = ("#S", "S#", "シーン", "S")
 CUT_HEADERS = ("カット", "C", "C#")
+KOUBAN_HEADERS = ("場面", "L/S", "L/LS", "D/N", "ロケ地")  # 香盤表のシートを見分けるのに使う列
+OUTPUT_MARK = "絵コンテ作成ソフトで書き出した香盤表"   # 書き出した香盤表（kouban.py）の「件名」。読み込もうとしたら知らせる
+
+
+@dataclass
+class Book:
+    """読み込んだ香盤表・カット表。"""
+    kouban: dict = field(default_factory=dict)   # 香盤表 {S: {bamen, ls, dn, loca, biko}}
+    cuts: dict = field(default_factory=dict)     # カット表 {(S, C): {"action": [...], "scenario": [...], "time": [...]}}
+    sources: dict = field(default_factory=dict)  # NOTE の小道具・カメラ・機材など {キー: (シーン単位 {S: [..]}, カット単位 {(S, C): [..]})}
+    title: str = ""                              # 香盤表のタイトル・撮影日（書き出す香盤表に引き継ぐ）
+    date: str = ""
+    extra: list = field(default_factory=list)    # 香盤表のそのほかの列（登場人物など）: [(見出し, すぐ上の段の文字（役者名など）, {S: 値})]
+    has_kouban: bool = False
+    has_cuts: bool = False
 
 
 def _open(path):
@@ -22,6 +40,17 @@ def _open(path):
 
 def _norm(v):
     return re.sub(r"\s", "", str(v)) if v is not None else ""
+
+
+def _text(v):
+    """セルの値を文字にする（3.0 → "3"、日付 → "2026/10/12"）。"""
+    if v is None:
+        return ""
+    if isinstance(v, (datetime.date, datetime.datetime)):
+        return f"{v.year}/{v.month}/{v.day}"
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v).strip()
 
 
 def _num(v):
@@ -45,7 +74,7 @@ def _find_header(ws, required):
         names = {_norm(c.value): c.column for c in row if c.value is not None}
         if any(h in names for h in required):
             return row[0].row, names
-    raise ValueError(f"見出し行が見つかりません（{'/'.join(required)} の列が必要）")
+    raise ValueError(f"「{ws.title}」のシートに見出し行が見つかりません（{'/'.join(required)} の列が必要）")
 
 
 def _col(names, *candidates, prefix=False):
@@ -56,9 +85,53 @@ def _col(names, *candidates, prefix=False):
     return None
 
 
-def load_kouban(path):
-    """香盤表 → {シーン: {場面, ls, dn, loca, biko}}"""
-    ws = _open(path).active
+def _find_sheets(wb):
+    """(香盤表のシート, カット表のシート)。名前で探し、なければ見出しで見分ける。"""
+    kouban = next((ws for ws in wb.worksheets if "香盤" in ws.title), None)
+    cuts = next((ws for ws in wb.worksheets if "カット表" in ws.title), None)
+    for ws in wb.worksheets:
+        if ws in (kouban, cuts) or "記入方法" in ws.title or "カット一覧" in ws.title:
+            continue
+        try:
+            _, names = _find_header(ws, SCENE_HEADERS)
+        except ValueError:
+            continue
+        if cuts is None and _col(names, *CUT_HEADERS):
+            cuts = ws
+        elif kouban is None and _col(names, *KOUBAN_HEADERS):
+            kouban = ws
+    return kouban, cuts
+
+
+def load_book(path):
+    """香盤表とカット表をまとめたExcelを読む。→ Book"""
+    wb = _open(path)
+    if wb.properties.subject == OUTPUT_MARK:
+        raise ValueError("これはソフトが書き出した香盤表です。書いた元の Excel（香盤表・カット表）を選んでください")
+    kouban, cuts = _find_sheets(wb)
+    if kouban is None and cuts is None:
+        raise ValueError("香盤表・カット表のシートが見つかりません。シート名を「香盤表」「カット表」にしてください")
+    book = Book()
+    if cuts is not None:
+        book.cuts, book.sources = _read_cut_table(cuts)
+        book.has_cuts = True
+    if kouban is not None:
+        _read_kouban(kouban, book)
+    return book
+
+
+def describe_book(book):
+    """画面に出す要約（「香盤表 3シーン・カット表 8カット」など）"""
+    parts = []
+    if book.has_kouban:
+        parts.append(f"香盤表 {len(book.kouban)}シーン")
+    if book.has_cuts:
+        parts.append(f"カット表 {len(book.cuts)}カット")
+    return "・".join(parts)
+
+
+def _read_kouban(ws, book):
+    """香盤表のシート → book.kouban（NOTE に入れるシーンの情報）と、書き出す香盤表に引き継ぐもの"""
     header_row, names = _find_header(ws, SCENE_HEADERS)
     cols = dict(
         scene=_col(names, *SCENE_HEADERS),
@@ -68,66 +141,42 @@ def load_kouban(path):
         loca=_col(names, "ロケ地"),
         biko=_col(names, "備考", prefix=True),
     )
-    scenes = {}
+    # 香盤表に小道具・機材の列があれば、カット表のシーン全体の行と同じ扱いにして1つにまとめる（二重に載せない）
+    shared = {k: _col(names, label, prefix=True) for k, label in (("props", "小道具"), ("gear", "機材"))}
+    # そのほかの列（登場人物など）は、書き出す香盤表にそのまま引き継ぐ。書き出す香盤表が足す列（カット数・時間）は読まない
+    known = set(cols.values()) | set(shared.values())
+    above = header_row - 1
+    extra = [(idx, _text(ws.cell(header_row, idx).value), _text(ws.cell(above, idx).value) if above else "")
+             for name, idx in sorted(names.items(), key=lambda x: x[1])
+             if idx not in known and name not in ("カット数", "時間（秒）")]
+    values = {idx: {} for idx, _, _ in extra}
     for row in ws.iter_rows(min_row=header_row + 1):
-        get = lambda k: row[cols[k] - 1].value if cols[k] else None
-        s = _num(get("scene"))
+        get = lambda idx: row[idx - 1].value if idx and idx <= len(row) else None
+        s = _num(get(cols["scene"]))
         if s is None:
             continue
-        info = {k: (str(get(k)).strip() if get(k) is not None else "") for k in ("bamen", "ls", "dn", "loca", "biko")}
+        info = {k: _text(get(cols[k])) for k in ("bamen", "ls", "dn", "loca", "biko")}
         if any(info.values()):
-            scenes[s] = info
-    return scenes
-
-
-def _load_by_cut(path, fields, combine=None):
-    """「シーン | カット | 項目...」形式のExcelを読む。
-
-    fields: {キー: 見出し候補のタプル}
-    combine: {新キー: (キー, ...)} 同じ行の値をスペースで連結して1項目にする
-    戻り値: {キー: (シーン単位 {S: [..]}, カット単位 {(S, C): [..]})}
-    カット欄が空の行はシーン全体に適用する。
-    """
-    ws = _open(path).active
-    header_row, names = _find_header(ws, SCENE_HEADERS)
-    c_scene = _col(names, *SCENE_HEADERS)
-    c_cut = _col(names, *CUT_HEADERS)
-    cols = {k: _col(names, *cands, prefix=True) for k, cands in fields.items()}
-    if not any(cols.values()):
-        raise ValueError(f"{path}: 項目の列が見つかりません（{'/'.join(c for cs in fields.values() for c in cs)}）")
-    combine = combine or {}
-    result = {k: (defaultdict(list), defaultdict(list)) for k in list(fields) + list(combine)}
-    for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
-        s = _num(row[c_scene - 1])
-        if s is None:
-            continue
-        cut = _num(row[c_cut - 1]) if c_cut else None
-        values = {k: str(row[c - 1]).strip() if c and row[c - 1] is not None else "" for k, c in cols.items()}
-        for k, keys in combine.items():
-            values[k] = " ".join(values[x] for x in keys if values[x])
-        for k, v in values.items():
-            if v:
-                by_scene, by_cut = result[k]
-                (by_cut[(s, cut)] if cut else by_scene[s]).append(v)
-    return result
-
-
-def load_props(path):
-    """小道具Excel → {"props": (シーン単位, カット単位)}"""
-    return _load_by_cut(path, {"props": ("小道具", "アイテム", "品名")})
-
-
-def load_equipment(path):
-    """カメラ・レンズ・機材Excel → {"camera": .., "gear": ..}
-
-    1行 = カメラ1台の設定。カメラとレンズは同じ行どうしを組にする（例: "A cam 35mm"）。
-    """
-    r = _load_by_cut(path, {
-        "cam": ("カメラ",),
-        "lens": ("レンズ",),
-        "gear": ("機材", "特機", "必要機材"),
-    }, combine={"camera": ("cam", "lens")})
-    return {"camera": r["camera"], "gear": r["gear"]}
+            book.kouban[s] = info
+        for k, idx in shared.items():
+            if idx and _text(get(idx)):
+                by_scene, _ = book.sources.setdefault(k, (defaultdict(list), defaultdict(list)))
+                by_scene[s].append(_text(get(idx)))
+        for idx, _, _ in extra:
+            if _text(get(idx)):
+                values[idx][s] = _text(get(idx))
+    book.extra = [(head, top, values[idx]) for idx, head, top in extra]
+    # 見出しより上の「タイトル」「撮影日」の欄の右に書いたもの
+    for row in ws.iter_rows(min_row=1, max_row=max(above, 1)):
+        for i, c in enumerate(row):
+            label = _norm(c.value)
+            if label in ("タイトル", "撮影日"):
+                value = next((_text(x.value) for x in row[i + 1:] if _text(x.value)), "")
+                if label == "タイトル":
+                    book.title = value
+                else:
+                    book.date = value
+    book.has_kouban = True
 
 
 CUT_FIELDS = {  # キー: 見出しの候補（前方一致）
@@ -141,8 +190,8 @@ CUT_FIELDS = {  # キー: 見出しの候補（前方一致）
 }
 
 
-def load_cut_table(path):
-    """カット表 → (カットの一覧, NOTE用のデータ)
+def _read_cut_table(ws):
+    """カット表のシート → (カットの一覧, NOTE用のデータ)
 
     1行 = 1カット。書き方のルール:
       S と C を書いた行          … そのカット
@@ -154,8 +203,6 @@ def load_cut_table(path):
       cuts:    {(S, C): {"action": [...], "scenario": [...], "time": [...]}}  表に書いた順
       sources: compose の NOTE_ITEMS と同じ形 {キー: (シーン単位 {S: [..]}, カット単位 {(S, C): [..]})}
     """
-    wb = _open(path)
-    ws = wb["カット表"] if "カット表" in wb.sheetnames else wb.worksheets[0]
     header_row, names = _find_header(ws, SCENE_HEADERS)
     c_scene = _col(names, *SCENE_HEADERS)
     c_cut = _col(names, *CUT_HEADERS)

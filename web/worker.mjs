@@ -22,7 +22,7 @@ ready.then(
 // 頼まれごと: 名前 → (engine, 引数, 途中経過を知らせる関数) => 結果
 const COMMANDS = {
   read: (engine, { pdf }, notify) => engine.read(pdf, (page) => notify({ page }, [page.picture?.buffer, page.mark?.buffer])),
-  setExcel: (engine, { key, data, ext }) => engine.setExcel(key, data, ext),
+  setExcel: (engine, { key, data, name }) => engine.setExcel(key, data, name),
   clearExcel: (engine, { key }) => engine.clearExcel(key),
   check: (engine, { names }) => engine.check(names),
   export: (engine, { rows, fmt, withImages }) => engine.exportPdf(rows, fmt, withImages),

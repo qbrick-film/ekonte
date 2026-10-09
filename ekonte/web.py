@@ -7,30 +7,19 @@
 import io, json, os, zipfile
 from .omr import read_pdf, page_count
 from .compose import compose, make_cut, check_cuts
-from .excel_import import load_kouban, load_props, load_equipment, load_cut_table
+from .excel_import import load_book, describe_book
 from .sheet import build as build_sheet
 
 WORK = "/tmp/ekonte"
 PREVIEW = {"picture": 1000, "mark": 700}  # 画面に出す画像の長辺（px）
 
 
-def _count_rows(sources):
-    n_scene = sum(len(v) for by_scene, _ in sources.values() for v in by_scene.values())
-    n_cut = sum(len(v) for _, by_cut in sources.values() for v in by_cut.values())
-    return f"シーン指定 {n_scene}件・カット指定 {n_cut}件"
-
-
-# Excelの種類: (読み込む関数, 画面に出す要約)。要約は gui.py の FilePicker と同じ
-EXCEL = {
-    "kouban": (load_kouban, lambda d: f"{len(d)}シーン"),
-    "cuts": (load_cut_table, lambda d: f"{len(d[0])}カット"),
-    "props": (load_props, _count_rows),
-    "equipment": (load_equipment, _count_rows),
-}
+# Excelの種類: (読み込む関数, 画面に出す要約)。香盤表とカット表を1つにまとめたファイルだけ（gui.py と同じ）
+EXCEL = {"book": (load_book, describe_book)}
 
 results = []  # 最後に読み取ったカット絵（omr.PageResult）
-excel = {}    # 選ばれたExcel: 種類 → 作業場所のファイル
-outputs = {}  # 最後に作った絵コンテ: "pdf" / "images" → bytes
+excel = {}    # 選ばれたExcel: 種類 → 作業場所のファイル（選んだときの名前のまま置く）
+outputs = {}  # 最後に作ったもの: "pdf"（絵コンテ）/ "kouban"（香盤表）/ "images" → bytes
 
 
 def _bytes(data):
@@ -39,8 +28,8 @@ def _bytes(data):
 
 
 def _write(name, data):
-    os.makedirs(WORK, exist_ok=True)
     path = os.path.join(WORK, name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
         f.write(_bytes(data))
     return path
@@ -73,17 +62,23 @@ def read(data, on_page):
     return total
 
 
-def set_excel(key, data, ext):
-    """Excelを読み込んで中身を確かめ、要約（「12シーン」など）を返す。読めなければ例外を投げ、前に選んだものを残す。"""
+def set_excel(key, data, name):
+    """Excelを読み込んで中身を確かめ、要約（「香盤表 3シーン・カット表 8カット」など）を返す。
+    読めなければ例外を投げ、前に選んだものを残す。name: 選んだファイルの名前（書き出す香盤表に書き添える）"""
     loader, describe = EXCEL[key]
-    ext = ext if ext in (".xlsx", ".xlsm") else ".xlsx"
-    new = _write(f"{key}_確認中{ext}", data)
+    name = os.path.basename(str(name).replace("\\", "/")) or "香盤表・カット表.xlsx"
+    if not name.lower().endswith((".xlsx", ".xlsm")):
+        name += ".xlsx"
+    new = _write(os.path.join("確認中", name), data)
     try:
         summary = describe(loader(new))
     except Exception:
         os.remove(new)
         raise
-    path = os.path.join(WORK, f"{key}{ext}")
+    path = os.path.join(WORK, key, name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if excel.get(key) not in (None, path):
+        os.remove(excel[key])
     os.replace(new, path)
     excel[key] = path
     return summary
@@ -95,21 +90,23 @@ def clear_excel(key):
 
 def check(names):
     """カット表とカット絵の突き合わせ。names: カット絵の番号の一覧（JSON）。戻り値: {"missing": [...], "extra": [...]} のJSON"""
-    missing, extra = check_cuts(json.loads(names), excel["cuts"])
+    missing, extra = check_cuts(json.loads(names), excel["book"]) if "book" in excel else ([], [])
     return json.dumps(dict(missing=missing, extra=extra), ensure_ascii=False)
 
 
 def export(rows, fmt, with_images):
-    """絵コンテPDFを作る。rows: [[読み取り結果の何番目か（0始まり）, カットの番号], ...] のJSON。
+    """絵コンテPDFと香盤表Excelを作る。rows: [[読み取り結果の何番目か（0始まり）, カットの番号], ...] のJSON。
 
     戻り値は compose の結果（ページ数・カット数・警告）のJSON。できたファイルは output() で受け取る。
     with_images: カット絵の画像（2-3.png など）も Zip にまとめる（デスクトップ版の「フォルダに書き出す」にあたる）。
     """
     cuts = [make_cut(name, results[i].picture) for i, name in json.loads(rows)]
     path = os.path.join(WORK, "絵コンテ.pdf")
+    kouban = os.path.join(WORK, "絵コンテ_香盤表.xlsx")
     os.makedirs(WORK, exist_ok=True)
-    r = compose(cuts, path, excel.get("kouban"), excel.get("props"), excel.get("equipment"), excel.get("cuts"), fmt)
+    r = compose(cuts, path, excel.get("book"), fmt, kouban_out=kouban)
     outputs["pdf"] = _read(path)
+    outputs["kouban"] = _read(kouban)
     outputs["images"] = _images_zip(cuts) if with_images else b""
     return json.dumps(r, ensure_ascii=False)
 

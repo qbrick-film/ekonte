@@ -1,8 +1,9 @@
 """動作確認用：実際に描いて塗った想定のカット絵PDFと、それを印刷→スキャンした想定のPDFを作る。
 
-python -m ekonte.sample 出力フォルダ
+python -m ekonte.sample 出力フォルダ          # カット絵の記入例（描いたもの・スキャンしたもの）
+python -m ekonte.sample 出力フォルダ 出力例   # 出力例（絵コンテPDF・一緒に書き出す香盤表）。スキャンした記入例から作る
 """
-import math, os, random, sys
+import math, os, random, sys, tempfile
 from reportlab.pdfgen import canvas
 import pypdfium2 as pdfium
 from PIL import Image, ImageDraw, ImageFilter
@@ -399,9 +400,32 @@ def build_scanned(src, path, dpi=150):
     pages[0].save(path, save_all=True, append_images=pages[1:], resolution=dpi)
 
 
+def outputs(folder, pdfs=True):
+    """出力例（絵コンテPDF・一緒に書き出す香盤表）を、スキャンした記入例と香盤表・カット表の記入例から作る。
+
+    アプリの ④ と同じ処理。pdfs=False なら香盤表だけ作り直す（絵コンテPDFはそのまま）。
+    """
+    from .omr import read_pdf
+    from .compose import compose, make_cut
+    from .kouban import output_path
+    from .templates import build
+    with tempfile.TemporaryDirectory() as tmp:
+        book = os.path.join(tmp, "香盤表・カット表_記入例.xlsx")
+        build(book, example=True)
+        for fmt, suffix in (("横", ""), ("縦", "_縦")):
+            cuts = [make_cut(r.name, r.picture) for r in read_pdf(os.path.join(folder, f"カット絵_記入例{suffix}_スキャン.pdf")) if r.name]
+            name = f"絵コンテ_出力例{suffix}.pdf"
+            kouban = output_path(os.path.join(folder, name)) if fmt == "横" else None  # 香盤表は横の分だけ
+            compose(cuts, os.path.join(folder if pdfs else tmp, name), book, fmt, kouban_out=kouban)
+            print("作成:", name, kouban or "")
+
+
 if __name__ == "__main__":
     out = sys.argv[1]
     os.makedirs(out, exist_ok=True)
+    if sys.argv[2:] == ["出力例"]:
+        outputs(out)
+        sys.exit()
     for fmt, suffix in (("横", ""), ("縦", "_縦")):
         drawn = os.path.join(out, f"カット絵_記入例{suffix}.pdf")
         build_drawn(drawn, fmt)

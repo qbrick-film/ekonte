@@ -1,5 +1,5 @@
 // 絵コンテ作成ソフト（ブラウザ版）の画面。デスクトップ版（ekonte/gui.py）と同じ流れ：
-//   ① カット絵PDFを読み取る → ② 要確認を直す → ③ Excelを選ぶ → ④ 絵コンテPDFを書き出す
+//   ① カット絵PDFを読み取る → ② 要確認を直す → ③ Excel（香盤表・カット表）を選ぶ → ④ 絵コンテPDFと香盤表Excelを書き出す
 // 計算は worker.mjs（ブラウザの中の Python）が行う。選んだファイルはどこにも送らない。
 
 const VERSION = document.documentElement.dataset.version;
@@ -301,7 +301,7 @@ $("b-next").addEventListener("click", () => selectNextReview());
 
 // ---------- ③ Excel ----------
 
-const excel = {};   // 種類 → 選んだファイル名
+const excel = {};   // 種類（"book" = 香盤表・カット表）→ 選んだファイル名
 const latest = {};  // 種類 → 最後の操作の番号（古い結果で上書きしないため）
 
 async function setExcel(row, file) {
@@ -313,8 +313,7 @@ async function setExcel(row, file) {
   info.className = "info muted";
   try {
     const data = new Uint8Array(await file.arrayBuffer());
-    const ext = (/\.[^.]+$/.exec(file.name)?.[0] ?? ".xlsx").toLowerCase();
-    const summary = await call("setExcel", { key, data, ext }, { transfer: [data.buffer] });
+    const summary = await call("setExcel", { key, data, name: file.name }, { transfer: [data.buffer] });
     if (latest[key] !== token) return;
     excel[key] = file.name;
     info.textContent = `${file.name}　（${summary}）`;
@@ -366,8 +365,8 @@ async function exportPdf() {
       `p${waiting.join(", p")} が要確認のままです。\n番号を修正するか、空欄にして除外してから書き出してください。`);
   }
   const rows = statuses.flatMap((s, i) => (["OK", "修正済み", "確認済み"].includes(s) ? [[i, nameOf(i)]] : []));
-  if (!rows.length && !excel.cuts) return alertDialog(APP_NAME, "絵コンテに入れるカットがありません。");
-  if (excel.cuts && !(await confirmCutCheck(rows.map(([, name]) => cutName(name))))) return;
+  if (!rows.length && !excel.book) return alertDialog(APP_NAME, "絵コンテに入れるカットがありません。");
+  if (excel.book && !(await confirmCutCheck(rows.map(([, name]) => cutName(name))))) return;
   busy($("b-export"), true, "書き出し中…");
   let r;
   try {
@@ -382,9 +381,10 @@ async function exportPdf() {
   let msg = `${r.cuts}カット / ${r.pages}ページ`;
   if (excluded) msg += `\n\n※ 除外・エラーの ${excluded} ページは入れていません`;
   if (r.warnings.length) msg += `\n\n⚠ 文字を最小にしても欄に収まらず、はみ出た分を切っています：\n${r.warnings.join("\n")}`;
-  const files = [{ bytes: r.pdf, name: "絵コンテ.pdf", label: "PDFを保存" }];
+  const files = [{ bytes: r.pdf, name: "絵コンテ.pdf", label: "PDFを保存" },
+    { bytes: r.kouban, name: "絵コンテ_香盤表.xlsx", label: "香盤表（Excel）を保存" }];
   if (r.images) files.push({ bytes: r.images, name: "絵コンテ_カット絵.zip", label: "画像をZipで保存" });
-  await doneDialog("絵コンテができました", msg, files);
+  await doneDialog("絵コンテと香盤表ができました", msg, files);
 }
 
 /** カット表とカット絵が食い違っていれば、内容を見せて続けるか確かめる */
@@ -504,9 +504,11 @@ function dialog(title, text, buttons = [{ label: "閉じる", primary: true }]) 
 
 const alertDialog = (title, text) => dialog(title, text);
 
+const TYPES = { pdf: "application/pdf", zip: "application/zip", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+
 /** できたファイルを保存・表示する画面。files: [{bytes, name, label}]（1つ目が主なファイル） */
 async function doneDialog(title, text, files) {
-  const urls = files.map((f) => blobUrl(f.bytes, f.name.endsWith(".pdf") ? "application/pdf" : "application/zip"));
+  const urls = files.map((f) => blobUrl(f.bytes, TYPES[f.name.split(".").pop()]));
   // 並びは「閉じる・開いて見る・（ほかのファイルの保存）・主なファイルの保存」。主なボタンを右端に置く
   const saves = files.map((f, k) => ({ label: f.label, href: urls[k], download: f.name, primary: k === 0, keepOpen: true }));
   const buttons = [{ label: "閉じる" }, ...(files[0].name.endsWith(".pdf") ? [{ label: "開いて見る", href: urls[0], newTab: true, keepOpen: true }] : []),
@@ -560,11 +562,10 @@ addEventListener("drop", (e) => {
   document.body.classList.remove("dragging");
   const file = e.dataTransfer.files[0];
   if (!file) return;
-  const row = e.target.closest?.(".pick");
-  if (row && /\.xls[xm]$/i.test(file.name)) return setExcel(row, file);
+  if (/\.xls[xm]$/i.test(file.name)) return setExcel(document.querySelector('.pick[data-key="book"]'), file);
   if (/\.pdf$/i.test(file.name)) return readPdf(file);
   alertDialog("このファイルは使えません",
-    `${file.name}\n\nカット絵はPDFを画面にドラッグします。Excel（.xlsx）は ③ の香盤表・カット表などの行にドラッグします。`);
+    `${file.name}\n\nカット絵はPDF、香盤表・カット表はExcel（.xlsx）を画面にドラッグします。`);
 });
 
 // 読み取ったのに書き出さずにページを閉じようとしたら、確かめる
@@ -582,8 +583,8 @@ const guideTips = () => [
   [[$("b-open")], "① 描いたカット絵PDFを読み取ります → ② 黄色の「要確認」の行だけ確認します", "below", 130, 0],
   [[$("sheet-format"), $("b-sheet")], "最初に用紙を作ります。左で「横 / 縦 9:16」を選んでから。印刷は実際のサイズ（100%）で", "below", -40, 0],
   [[$("b-samples")], "初めてなら、ここの記入例で一度通してみるのがおすすめです", "below", 0, 120],
-  [[$("excel-box")], "③ 香盤表・カット表のExcelを選びます（省略可）", "above", -150, 0],
-  [[$("b-export")], "④ 絵コンテPDFを書き出します", "left", 0, 0],
+  [[$("excel-box")], "③ 香盤表とカット表をまとめたExcelを選びます（省略可）", "above", -150, 0],
+  [[$("b-export")], "④ 絵コンテPDFと香盤表Excelを書き出します", "left", 0, 0],
 ];
 
 function svgEl(tag, attrs) {

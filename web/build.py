@@ -18,7 +18,7 @@ from ekonte import __version__, REPO, samples
 CACHE = os.path.join(WEB, ".cache")
 PAGES = ["index.html", "style.css", "app.mjs", "worker.mjs", "engine.mjs", "icon.svg"]
 # ブラウザ版で使う Python（gui.py・sample.py などデスクトップ版だけのものは入れない）
-PY_FILES = ["__init__.py", "web.py", "omr.py", "layout.py", "compose.py", "excel_import.py", "fonts.py", "sheet.py"]
+PY_FILES = ["__init__.py", "web.py", "omr.py", "layout.py", "compose.py", "kouban.py", "excel_import.py", "fonts.py", "sheet.py"]
 FONT_FILES = ["BIZUDGothic-Regular.ttf", "BIZUDGothic-Bold.ttf", "OFL.txt"]
 MARK = ".ekonte-web"  # このスクリプトが作ったフォルダの印（印のないフォルダは消さない）
 ZIP_TIME = (2020, 1, 1, 0, 0, 0)  # Zip の中の日時を固定し、同じ中身なら同じ Zip にする

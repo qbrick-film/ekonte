@@ -159,7 +159,7 @@ body.dragging .app { outline: 3px dashed var(--accent); outline-offset: -6px; bo
 
 /* 確認・完了の画面 */
 dialog {
-  width: min(520px, calc(100vw - 32px));
+  width: min(640px, calc(100vw - 32px));
   border: none; border-radius: 14px; padding: 20px 22px 16px;
   color: var(--text); box-shadow: 0 24px 60px rgba(10, 20, 40, .28);
 }

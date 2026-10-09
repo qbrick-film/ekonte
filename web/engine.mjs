@@ -33,9 +33,9 @@ class Engine {
     }));
   }
 
-  /** Excelを読み込んで確かめ、要約（「12シーン」など）を返す */
-  setExcel(key, data, ext) {
-    return call(() => this.web.set_excel(key, data, ext));
+  /** Excelを読み込んで確かめ、要約（「香盤表 3シーン・カット表 8カット」など）を返す。name: 選んだファイルの名前 */
+  setExcel(key, data, name) {
+    return call(() => this.web.set_excel(key, data, name));
   }
 
   clearExcel(key) {
@@ -47,10 +47,11 @@ class Engine {
     return JSON.parse(call(() => this.web.check(JSON.stringify(names))));
   }
 
-  /** 絵コンテPDFを作る → {pages, cuts, warnings, pdf, images} */
+  /** 絵コンテPDFと香盤表Excelを作る → {pages, cuts, warnings, pdf, kouban, images} */
   exportPdf(rows, fmt, withImages) {
     const result = JSON.parse(call(() => this.web.export(JSON.stringify(rows), fmt, withImages)));
-    return { ...result, pdf: takeBytes(call(() => this.web.output("pdf"))), images: takeBytes(call(() => this.web.output("images"))) };
+    const output = (kind) => takeBytes(call(() => this.web.output(kind)));
+    return { ...result, pdf: output("pdf"), kouban: output("kouban"), images: output("images") };
   }
 
   /** カット絵用紙のPDF */

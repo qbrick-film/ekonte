@@ -1,18 +1,20 @@
-"""カット絵の画像とExcelから絵コンテPDFを組み立てる。
+"""カット絵の画像とExcelから絵コンテPDFを組み立てる（香盤表のExcelも一緒に書き出せる）。
 
-python -m ekonte.compose カット絵フォルダ 出力.pdf [--kouban 香盤表.xlsx] [--cuts カット表.xlsx]
-                         [--props 小道具.xlsx] [--equipment 機材.xlsx] [--format 縦]
+python -m ekonte.compose カット絵フォルダ 出力.pdf [--excel 香盤表・カット表.xlsx] [--kouban 香盤表.xlsx] [--format 縦]
+  --excel  書いた香盤表・カット表（1つのファイル）
+  --kouban 一緒に書き出す香盤表（kouban.py）
 
 レイアウトは2種類。横 = A4縦の表に1行1カット（6カット/ページ）、縦 = A4横に縦型9:16のカットを4つ並べる。
 """
 import argparse, html, os, re
+from dataclasses import dataclass
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 from reportlab.platypus import Paragraph
 from reportlab.lib.utils import ImageReader
-from .excel_import import load_kouban, load_props, load_equipment, load_cut_table
+from .excel_import import Book, load_book
 from .fonts import JP
 NAME_RE = re.compile(r"^(\d+)-(\d+)([a-j]?)\.png$")
 
@@ -39,6 +41,7 @@ def collect_cuts(folder):
 
 # NOTE欄の項目: (キー, 表示名, カット指定があればシーン指定を置き換えるか)
 #   カメラ（＋レンズ）はカット指定があればそのカットの設定に置き換え、小道具・機材・NOTEは足し合わせる
+#   どれもカット表（香盤表に小道具・機材の列があればそれも）から入る
 NOTE_ITEMS = [
     ("camera", "カメラ", True),
     ("gear", "機材", False),
@@ -67,27 +70,78 @@ def to_markup(text):
     return html.escape(t, quote=False).replace("\n", "<br/>")
 
 
-def build_note(cut, first_in_scene, kouban, sources):
+LIST_SEP = re.compile(r"[、,，\n]")
+
+
+def without(text, shown):
+    """香盤表の備考から、小道具・機材などとしてすでに載せたものを除く（「拳銃、雨降らし」→「雨降らし」）。
+
+    同じものを2回載せないため。除くものがなければ、書いたとおりのまま返す。
+    """
+    parts = [p.strip() for p in LIST_SEP.split(text)]
+    if not any(p in shown for p in parts):
+        return text
+    return "、".join(p for p in parts if p and p not in shown)
+
+
+def note_lines(cut, first_in_scene, kouban, sources):
+    """NOTE欄の行 [(文, 太字か)]。シーンの情報（シーンの最初のカットだけ）→ カメラ → 機材 → 小道具 → NOTE → 備考 の順。"""
     lines = []
     info = kouban.get(cut["s"], {})
     if first_in_scene and info:
         head = " / ".join(v for v in (info["bamen"], info["ls"], info["dn"]) if v)
         if head:
-            lines.append(f"<b>{to_markup(head)}</b>")
+            lines.append((head, True))
         if info["loca"]:
-            lines.append(f"ロケ地: {to_markup(info['loca'])}")
+            lines.append((f"ロケ地: {info['loca']}", False))
+    shown = set()
     for key, label, override in NOTE_ITEMS:
-        items = _items(sources, key, cut["s"], cut["c"], override)
-        items = [to_markup(v) for v in dict.fromkeys(items)]
+        items = list(dict.fromkeys(_items(sources, key, cut["s"], cut["c"], override)))
+        shown.update(items)
         if key == "camera":  # カメラは1台1行
-            lines += [f"{label}: {v}" for v in items]
+            lines += [(f"{label}: {v}", False) for v in items]
         elif label is None:
-            lines += items
+            lines += [(v, False) for v in items]
         elif items:
-            lines.append(f"{label}: " + "、".join(items))
-    if info.get("biko"):
-        lines.append("備考: " + to_markup(info["biko"]))
-    return "<br/>".join(lines)
+            lines.append((f"{label}: " + "、".join(items), False))
+    biko = without(info.get("biko", ""), shown)
+    if biko:
+        lines.append((f"備考: {biko}", False))
+    return lines
+
+
+def note_markup(lines):
+    return "<br/>".join(f"<b>{to_markup(t)}</b>" if bold else to_markup(t) for t, bold in lines)
+
+
+@dataclass
+class Row:
+    """絵コンテの1カット分の中身。PDF（compose）と香盤表Excel（kouban.py）の両方がこれを使う。"""
+    cut: dict          # make_cut() の結果（画像も含む）
+    first: bool        # シーンの最初のカットか
+    action: list       # ACTION/SE 欄の行
+    scenario: list     # SCENARIO 欄の行
+    time: str          # TIME 欄
+    note: list         # NOTE 欄の行 [(文, 太字か)]
+    items: dict        # このカットの小道具・カメラ・機材など {キー: [...]}（香盤表でシーンごとにまとめる）
+
+
+def plan(cuts, book):
+    """絵コンテに載せるカットを番号順に並べ、各欄の中身を決める。
+
+    cuts: make_cut() の結果のリスト（カット絵）。カット表にあってカット絵がないカットも、PICTURE を空けて載せる。
+    """
+    have = {(x["s"], x["c"]) for x in cuts}
+    cuts = list(cuts) + [make_cut(f"{s}-{cc}") for s, cc in book.cuts if (s, cc) not in have]
+    rows, prev = [], None
+    for cut in sorted(cuts, key=lambda x: x["key"]):
+        first = cut["s"] != prev
+        t = book.cuts.get((cut["s"], cut["c"]), {})
+        items = {k: list(dict.fromkeys(_items(book.sources, k, cut["s"], cut["c"], o))) for k, _, o in NOTE_ITEMS}
+        rows.append(Row(cut, first, t.get("action", []), t.get("scenario", []), t["time"][0] if t.get("time") else "",
+                        note_lines(cut, first, book.kouban, book.sources), items))
+        prev = cut["s"]
+    return rows
 
 
 class TableLayout:
@@ -257,9 +311,11 @@ def draw_cut(c, layout, i, cut, texts):
     return overflow
 
 
-def check_cuts(picture_names, cut_table_path):
-    """カット絵とカット表の突き合わせ → (カット絵がないカット, カット表にないカット)"""
-    table, _ = load_cut_table(cut_table_path)
+def check_cuts(picture_names, excel_path):
+    """カット絵とカット表の突き合わせ → (カット絵がないカット, カット表にないカット)。カット表のシートがなければ ([], [])"""
+    table = load_book(excel_path).cuts
+    if not table:
+        return [], []
     table_names = {f"{s}-{c}" for s, c in table}
     pics = set(picture_names)
     order = lambda n: make_cut(n)["key"]
@@ -269,77 +325,62 @@ def check_cuts(picture_names, cut_table_path):
 COL_LABEL = {"action": "ACTION/SE", "scenario": "SCENARIO", "time": "TIME", "note": "NOTE"}
 
 
-def compose(cuts, out, kouban_path=None, props_path=None, equipment_path=None, cut_table_path=None, fmt="横"):
+def compose(cuts, out, excel_path=None, fmt="横", kouban_out=None):
     """絵コンテPDFを書き出す。
 
     cuts: make_cut() の結果のリスト（カット絵）。カット表にあってカット絵がないカットも、PICTURE を空けて載せる。
+    excel_path: 香盤表・カット表のExcel（1つのファイル。省略可）
     fmt: "横"（1ページ6カット）/ "縦"（9:16、1ページ4カット）。
+    kouban_out: 指定すると、同じ中身の香盤表（Excel）も書き出す
     番号順に並べ、シーンごとに改ページして配置する。
     戻り値: {"pages": ページ数, "cuts": カット数, "warnings": [...]}
     """
-    kouban = load_kouban(kouban_path) if kouban_path else {}
-    sources, table = {}, {}
-    if props_path:
-        sources.update(load_props(props_path))
-    if equipment_path:
-        sources.update(load_equipment(equipment_path))
-    if cut_table_path:
-        table, table_sources = load_cut_table(cut_table_path)
-        for k, (by_scene, by_cut) in table_sources.items():  # 個別のExcelとカット表の両方に書かれていれば足し合わせる
-            if k in sources:
-                for d, add in ((sources[k][0], by_scene), (sources[k][1], by_cut)):
-                    for kk, v in add.items():
-                        d[kk] = d.get(kk, []) + v
-            else:
-                sources[k] = (by_scene, by_cut)
-    have = {(x["s"], x["c"]) for x in cuts}
-    cuts = list(cuts) + [make_cut(f"{s}-{cc}") for s, cc in table if (s, cc) not in have]
-    cuts = sorted(cuts, key=lambda x: x["key"])
-    if not cuts:
+    book = load_book(excel_path) if excel_path else Book()
+    rows = plan(cuts, book)
+    if not rows:
         raise ValueError("カットがありません")
     warnings = []
     layout = LAYOUTS[fmt]
     c = canvas.Canvas(out, pagesize=layout.pagesize)
-    page, row, prev_scene = 0, layout.per_page, None
-    for cut in cuts:
-        new_scene = cut["s"] != prev_scene
+    page, slot = 0, layout.per_page
+    for row in rows:
         # シーンが変わったら、段が余っていても次のページから始める
-        if new_scene or row == layout.per_page:
+        if row.first or slot == layout.per_page:
             if page:
                 c.showPage()
             page += 1
-            row = 0
+            slot = 0
             draw_page(c, layout, page)
-        t = table.get((cut["s"], cut["c"]), {})
-        texts = {k: "<br/>".join(to_markup(v) for v in t.get(k, [])) for k in ("action", "scenario")}
-        texts["time"] = to_markup(t["time"][0]) if t.get("time") else ""
-        texts["note"] = build_note(cut, new_scene, kouban, sources)
-        for key in draw_cut(c, layout, row, cut, texts):
+        texts = {k: "<br/>".join(to_markup(v) for v in getattr(row, k)) for k in ("action", "scenario")}
+        texts["time"] = to_markup(row.time) if row.time else ""
+        texts["note"] = note_markup(row.note)
+        cut = row.cut
+        for key in draw_cut(c, layout, slot, cut, texts):
             warnings.append(f"{cut['s']}-{cut['c']} の {COL_LABEL[key]} が長すぎて欄に収まりません（No.{page}）")
-        row += 1
-        prev_scene = cut["s"]
+        slot += 1
     c.save()
-    return {"pages": page, "cuts": len(cuts), "warnings": warnings}
+    if kouban_out:
+        from .kouban import write
+        write(kouban_out, rows, book, excel_path)
+    return {"pages": page, "cuts": len(rows), "warnings": warnings}
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("folder")
     ap.add_argument("out")
-    ap.add_argument("--kouban")
-    ap.add_argument("--cuts", help="カット表")
-    ap.add_argument("--props")
-    ap.add_argument("--equipment")
+    ap.add_argument("--excel", help="香盤表・カット表（1つのファイル）")
+    ap.add_argument("--kouban", help="一緒に書き出す香盤表（.xlsx）")
     ap.add_argument("--format", choices=list(LAYOUTS), default="横", help="横（1ページ6カット）/ 縦（9:16、4カット）")
     a = ap.parse_args()
     cuts = collect_cuts(a.folder)
-    if a.cuts:
-        missing, extra = check_cuts([f"{x['s']}-{x['c']}" for x in cuts], a.cuts)
+    if a.excel:
+        missing, extra = check_cuts([f"{x['s']}-{x['c']}" for x in cuts], a.excel)
         if missing:
             print("カット絵がないカット:", ", ".join(missing))
         if extra:
             print("カット表にないカット:", ", ".join(extra))
-    r = compose(cuts, a.out, a.kouban, a.props, a.equipment, a.cuts, a.format)
+    r = compose(cuts, a.out, a.excel, a.format, a.kouban)
     for w in r["warnings"]:
         print("⚠", w)
     print(f"{r['cuts']}カット / {r['pages']}ページ → {a.out}")

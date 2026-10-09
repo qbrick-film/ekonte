@@ -1,6 +1,6 @@
 """絵コンテ作成ソフトの画面。
 
-① カット絵PDFを読み取る → ② 要確認を直す → ③ Excelを選ぶ → ④ 絵コンテPDFを書き出す
+① カット絵PDFを読み取る → ② 要確認を直す → ③ Excel（香盤表・カット表）を選ぶ → ④ 絵コンテPDFと香盤表Excelを書き出す
 """
 import json, math, os, re, sys, traceback
 from PySide6.QtCore import Qt, QThread, Signal, QSettings, QUrl, QTimer, QEvent, QRect, QRectF, QPoint, QPointF, QObject
@@ -16,8 +16,9 @@ from PySide6.QtWidgets import (
 from . import __version__, REPO
 from .omr import read_pdf, page_count
 from .compose import compose, make_cut, check_cuts, CUT_RE
-from .excel_import import load_kouban, load_props, load_equipment, load_cut_table
-from .templates import build as build_cut_table_template
+from .excel_import import load_book, describe_book
+from .kouban import output_path as kouban_path_for
+from .templates import build as build_template
 from .sheet import build as build_sheet
 from . import samples
 from .layout import FORMATS
@@ -122,7 +123,7 @@ class FilePicker(QWidget):
             self.set_path(last)
 
     def save_template(self):
-        start = os.path.join(self.settings.value("dir/excel", ""), "カット表.xlsx")
+        start = os.path.join(self.settings.value("dir/excel", ""), "香盤表・カット表.xlsx")
         path, _ = QFileDialog.getSaveFileName(self, "テンプレートを保存", start, "Excel (*.xlsx)")
         if path:
             self.template(path)
@@ -152,17 +153,6 @@ class FilePicker(QWidget):
         self.info.setText(f"{os.path.basename(path)}　（{summary}）")
         self.info.setStyleSheet("")
         self.settings.setValue(f"excel/{self.key}", path)
-
-
-def _describe_cut_table(data):
-    cuts, _ = data
-    return f"{len(cuts)}カット"
-
-
-def _count_rows(sources):
-    n_scene = sum(len(v) for by_scene, _ in sources.values() for v in by_scene.values())
-    n_cut = sum(len(v) for _, by_cut in sources.values() for v in by_cut.values())
-    return f"シーン指定 {n_scene}件・カット指定 {n_cut}件"
 
 
 class SamplesDialog(QDialog):
@@ -362,8 +352,8 @@ def show_guide(window):
         (window.b_open, "① 描いたカット絵PDFを読み取ります → ② 黄色の「要確認」の行だけ確認します", "below", 120, 0),
         ((window.sheet_format, window.b_sheet), "最初に用紙を作ります。左で「横 / 縦 9:16」を選んでから。印刷は実際のサイズ（100%）で", "below", -60, 0),
         (window.b_samples, "初めてなら、ここの記入例で一度通してみるのがおすすめです", "below", 0, 120),
-        (window.excel_box, "③ 香盤表・カット表のExcelを選びます（省略可）", "above", -150, 0),
-        (window.b_export, "④ 絵コンテPDFを書き出します", "left", 0, 0),
+        (window.excel_box, "③ 香盤表とカット表をまとめたExcelを選びます（省略可）", "above", -150, 0),
+        (window.b_export, "④ 絵コンテPDFと香盤表Excelを書き出します", "left", 0, 0),
     ])
 
 
@@ -482,16 +472,14 @@ class MainWindow(QMainWindow):
         split.setSizes([620, 580])
         v.addWidget(split, 1)
 
-        # ③ Excel
-        box = QGroupBox("③ 絵コンテに入れるExcel（どれも省略可。Googleスプレッドシートは .xlsx でダウンロードして選ぶ）")
+        # ③ Excel（香盤表とカット表を1つのファイルに）
+        box = QGroupBox("③ 絵コンテに入れるExcel（香盤表とカット表をまとめた1つのファイル。省略可。"
+                        "Googleスプレッドシートは .xlsx でダウンロードして選ぶ）")
         g = QVBoxLayout(box)
-        self.kouban = FilePicker("kouban", "香盤表", load_kouban, lambda d: f"{len(d)}シーン", self.settings)
-        self.cuttable = FilePicker("cuts", "カット表", load_cut_table, _describe_cut_table, self.settings,
-                                   template=build_cut_table_template)
-        self.props = FilePicker("props", "小道具（個別のExcel）", load_props, _count_rows, self.settings)
-        self.equip = FilePicker("equipment", "機材（個別のExcel）", load_equipment, _count_rows, self.settings)
-        for w in (self.kouban, self.cuttable, self.props, self.equip):
-            g.addWidget(w)
+        if not self.settings.value("excel/book") and self.settings.value("excel/cuts"):
+            self.settings.setValue("excel/book", self.settings.value("excel/cuts"))  # 前の版で選んでいたカット表を引き継ぐ
+        self.book = FilePicker("book", "香盤表・カット表", load_book, describe_book, self.settings, template=build_template)
+        g.addWidget(self.book)
         v.addWidget(box)
         self.excel_box = box
 
@@ -500,7 +488,7 @@ class MainWindow(QMainWindow):
         self.export_images = QCheckBox("カット絵の画像（2-3.png など）もフォルダに書き出す")
         bottom.addWidget(self.export_images)
         bottom.addStretch(1)
-        self.b_export = QPushButton("④ 絵コンテPDFを書き出す…")
+        self.b_export = QPushButton("④ 絵コンテPDFと香盤表を書き出す…")
         self.b_export.setMinimumHeight(38)
         self.b_export.setStyleSheet("QPushButton { font-weight: bold; padding: 0 18px; }")
         self.b_export.clicked.connect(self.export)
@@ -709,20 +697,23 @@ class MainWindow(QMainWindow):
             return
         cuts = [make_cut(self.current_name(i), self.results[i].picture)
                 for i, s in enumerate(statuses) if s in ("OK", "修正済み", "確認済み")]
-        if not cuts and not self.cuttable.path:
+        if not cuts and not self.book.path:
             QMessageBox.warning(self, APP_NAME, "絵コンテに入れるカットがありません。")
             return
-        if self.cuttable.path and not self._confirm_cut_check([f"{c['s']}-{c['c']}" for c in cuts]):
+        if self.book.path and not self._confirm_cut_check([f"{c['s']}-{c['c']}" for c in cuts]):
             return
         start = os.path.join(self.settings.value("dir/out", self.settings.value("dir/pdf", "")), "絵コンテ.pdf")
-        path, _ = QFileDialog.getSaveFileName(self, "絵コンテPDFを保存", start, "PDF (*.pdf)")
+        path, _ = QFileDialog.getSaveFileName(self, "絵コンテPDFを保存（香盤表のExcelも隣に保存します）", start, "PDF (*.pdf)")
         if not path:
+            return
+        kouban = kouban_path_for(path, self.book.path)
+        if os.path.exists(kouban) and QMessageBox.question(
+                self, APP_NAME, f"{os.path.basename(kouban)} はすでにあります。上書きしますか？") != QMessageBox.Yes:
             return
         self.settings.setValue("dir/out", os.path.dirname(path))
         try:
             QApplication.setOverrideCursor(Qt.WaitCursor)
-            result = compose(cuts, path, self.kouban.path, self.props.path, self.equip.path, self.cuttable.path,
-                             self.sheet_format_of_results())
+            result = compose(cuts, path, self.book.path, self.sheet_format_of_results(), kouban_out=kouban)
             if self.export_images.isChecked():
                 folder = os.path.splitext(path)[0] + "_カット絵"
                 os.makedirs(folder, exist_ok=True)
@@ -736,17 +727,17 @@ class MainWindow(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
         excluded = statuses.count("除外") + statuses.count("エラー")
-        msg = f"{result['cuts']}カット / {result['pages']}ページ\n{path}"
+        msg = f"{result['cuts']}カット / {result['pages']}ページ\n{path}\n{kouban}"
         if excluded:
             msg += f"\n\n※ 除外・エラーの {excluded} ページは入れていません"
         if result["warnings"]:
             msg += "\n\n⚠ 文字を最小にしても欄に収まらず、はみ出た分を切っています：\n" + "\n".join(result["warnings"])
-        self._done_dialog("絵コンテを書き出しました", msg, path)
+        self._done_dialog("絵コンテと香盤表を書き出しました", msg, path, kouban)
 
     def _confirm_cut_check(self, names):
         """カット表とカット絵が食い違っていれば、内容を見せて続けるか確認する。"""
         try:
-            missing, extra = check_cuts(names, self.cuttable.path)
+            missing, extra = check_cuts(names, self.book.path)
         except Exception as e:
             QMessageBox.critical(self, "カット表を読み込めません", str(e))
             return False
@@ -760,15 +751,18 @@ class MainWindow(QMainWindow):
         ans = QMessageBox.question(self, "カット表とカット絵が一致しません", "\n\n".join(lines) + "\n\nこのまま書き出しますか？")
         return ans == QMessageBox.Yes
 
-    def _done_dialog(self, title, text, path):
+    def _done_dialog(self, title, text, path, kouban=None):
         box = QMessageBox(self)
         box.setWindowTitle(title)
         box.setText(text)
         open_btn = box.addButton("開く", QMessageBox.AcceptRole)
+        kouban_btn = box.addButton("香盤表を開く", QMessageBox.ActionRole) if kouban else None
         box.addButton("閉じる", QMessageBox.RejectRole)
         box.exec()
         if box.clickedButton() is open_btn:
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+        elif kouban_btn and box.clickedButton() is kouban_btn:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(kouban))
 
 
 def selftest(pdf, out):
@@ -777,14 +771,14 @@ def selftest(pdf, out):
     results = list(read_pdf(pdf))
     cuts = [make_cut(r.name, r.picture) for r in results if r.name]
     fmt = next((r.format for r in results if r.status != "エラー"), "横")
-    r = compose(cuts, out, fmt=fmt)
+    r = compose(cuts, out, fmt=fmt, kouban_out=kouban_path_for(out))  # 香盤表のExcelも書き出せるか確認する
     w = MainWindow()  # 画面が組み立てられるかも確認する
     SamplesDialog(w, w.settings)
     samples.save_zip(os.path.splitext(out)[0] + "_サンプル.zip")  # 同梱のサンプルを取り出せるかも確認する
     tls = QSslSocket.supportsSsl()  # 更新確認に使う暗号化通信の部品がアプリに入っているか
     from openpyxl.xml import DEFUSEDXML  # 悪意のあるExcel（XML爆弾）への対策が効いているか
     print(f"selftest: {FORMATS[fmt]} {len(results)}ページ読み取り / {r['cuts']}カット / {r['pages']}ページ書き出し / "
-          f"サンプル{len(samples.FILES)}件保存 / 画面OK / 暗号化通信{'OK' if tls else 'なし'} / "
+          f"香盤表OK / サンプル{len(samples.FILES)}件保存 / 画面OK / 暗号化通信{'OK' if tls else 'なし'} / "
           f"Excel対策{'OK' if DEFUSEDXML else 'なし'}")
     for r in results:
         print(f"  p{r.page}: {r.name} {r.status} {'；'.join(r.warnings)}")

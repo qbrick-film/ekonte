@@ -70,36 +70,12 @@
   </main>
 
   <section class="excel panel" id="excel-box" aria-label="③ 絵コンテに入れるExcel">
-    <h2>③ 絵コンテに入れるExcel <span class="hint">どれも省略可。Googleスプレッドシートは .xlsx でダウンロードして選ぶ</span></h2>
-    <div class="pick" data-key="kouban">
-      <span class="label">香盤表</span>
+    <h2>③ 絵コンテに入れるExcel <span class="hint">香盤表とカット表をまとめた1つのファイル。省略可。Googleスプレッドシートは .xlsx でダウンロードして選ぶ</span></h2>
+    <div class="pick" data-key="book">
+      <span class="label">香盤表・カット表</span>
       <span class="info muted">未選択</span>
       <span class="actions">
-        <button type="button" class="btn choose">選択…</button><button type="button" class="btn clear">解除</button>
-      </span>
-      <input type="file" accept=".xlsx,.xlsm" hidden>
-    </div>
-    <div class="pick" data-key="cuts">
-      <span class="label">カット表</span>
-      <span class="info muted">未選択</span>
-      <span class="actions">
-        <a class="btn" href="samples/カット表_記入例.xlsx" download="カット表.xlsx" title="記入例つきの空のExcelを保存する">テンプレート…</a>
-        <button type="button" class="btn choose">選択…</button><button type="button" class="btn clear">解除</button>
-      </span>
-      <input type="file" accept=".xlsx,.xlsm" hidden>
-    </div>
-    <div class="pick" data-key="props">
-      <span class="label">小道具（個別のExcel）</span>
-      <span class="info muted">未選択</span>
-      <span class="actions">
-        <button type="button" class="btn choose">選択…</button><button type="button" class="btn clear">解除</button>
-      </span>
-      <input type="file" accept=".xlsx,.xlsm" hidden>
-    </div>
-    <div class="pick" data-key="equipment">
-      <span class="label">機材（個別のExcel）</span>
-      <span class="info muted">未選択</span>
-      <span class="actions">
+        <a class="btn" href="samples/香盤表・カット表_記入例.xlsx" download="香盤表・カット表.xlsx" title="記入例つきの空のExcelを保存する">テンプレート…</a>
         <button type="button" class="btn choose">選択…</button><button type="button" class="btn clear">解除</button>
       </span>
       <input type="file" accept=".xlsx,.xlsm" hidden>
@@ -108,7 +84,7 @@
 
   <section class="export">
     <label class="check"><input type="checkbox" id="export-images"> カット絵の画像（2-3.png など）もZipで保存する</label>
-    <button type="button" class="btn primary big" id="b-export">④ 絵コンテPDFを書き出す…</button>
+    <button type="button" class="btn primary big" id="b-export">④ 絵コンテPDFと香盤表を書き出す…</button>
   </section>
 
   <footer class="muted">

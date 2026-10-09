@@ -1,6 +1,6 @@
-// ブラウザ版の計算部分を Node で動かし、記入例で 読み取り → 絵コンテ書き出し → 用紙作成 を行う（GitHub の自動ビルドと手元の確認用）。
+// ブラウザ版の計算部分を Node で動かし、記入例で 読み取り → 絵コンテ・香盤表の書き出し → 用紙作成 を行う（GitHub の自動ビルドと手元の確認用）。
 //   node web/test_engine.mjs dist-web 出力フォルダ
-// できたPDFと読み取り結果は、compare.py でデスクトップ版と同じ Python の処理の結果と比べる。
+// できたPDF・香盤表と読み取り結果は、compare.py でデスクトップ版と同じ Python の処理の結果と比べる。
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -17,11 +17,9 @@ const engine = await startEngine({ base: dist + "/", fetchBytes: load, onStatus:
 const info = engine.info();
 lap(`準備できました: Python ${info.python} / numpy ${info.numpy} / Pillow ${info.pillow} / pypdfium2 ${info.pypdfium2}`);
 
-const excel = {
-  kouban: engine.setExcel("kouban", sample("香盤表_記入例.xlsx"), ".xlsx"),
-  cuts: engine.setExcel("cuts", sample("カット表_記入例.xlsx"), ".xlsx"),
-};
-lap(`Excel: 香盤表 ${excel.kouban} / カット表 ${excel.cuts}`);
+const BOOK = "香盤表・カット表_記入例.xlsx";
+const excel = engine.setExcel("book", sample(BOOK), BOOK);
+lap(`Excel: ${excel}`);
 
 const cases = [];
 for (const [fmt, pdf] of [["横", "カット絵_記入例_スキャン.pdf"], ["縦", "カット絵_記入例_縦_スキャン.pdf"]]) {
@@ -34,11 +32,13 @@ for (const [fmt, pdf] of [["横", "カット絵_記入例_スキャン.pdf"], ["
   const check = engine.check(rows.map(([, name]) => name));
   const r = engine.exportPdf(rows, format, true);
   const output = `絵コンテ_${fmt}.pdf`;
+  const kouban = `絵コンテ_${fmt}_香盤表.xlsx`;
   fs.writeFileSync(path.join(out, output), r.pdf);
+  fs.writeFileSync(path.join(out, kouban), r.kouban);
   fs.writeFileSync(path.join(out, `カット絵画像_${fmt}.zip`), r.images);
-  lap(`${fmt}: ${r.cuts}カット / ${r.pages}ページ書き出し（警告 ${r.warnings.length}件）`);
+  lap(`${fmt}: ${r.cuts}カット / ${r.pages}ページ書き出し（警告 ${r.warnings.length}件）・香盤表 ${r.kouban.length}バイト`);
   const previews = pages.every((p) => p.picture?.length && (p.status === "エラー" || p.mark?.length));
-  cases.push({ pdf, format, output, rows, check, previews, result: { pages: r.pages, cuts: r.cuts, warnings: r.warnings },
+  cases.push({ pdf, format, output, kouban, rows, check, previews, result: { pages: r.pages, cuts: r.cuts, warnings: r.warnings },
     pages: pages.map(({ picture, mark, ...p }) => p) });
 }
 
@@ -61,8 +61,8 @@ const expectError = (label, fn) => {
   }
   console.log(`  ${label} → ${errors[label] ?? "（エラーにならなかった）"}`);
 };
-expectError("Excelではないファイルを選ぶ", () => engine.setExcel("kouban", sample("カット絵_記入例.pdf"), ".xlsx"));
-expectError("カット表ではないExcelをカット表に選ぶ", () => engine.setExcel("cuts", sample("香盤表_記入例.xlsx"), ".xlsx"));
+expectError("Excelではないファイルを選ぶ", () => engine.setExcel("book", sample("カット絵_記入例.pdf"), "カット絵_記入例.pdf"));
+expectError("書き出した香盤表を選ぶ", () => engine.setExcel("book", sample("絵コンテ_出力例_香盤表.xlsx"), "絵コンテ_出力例_香盤表.xlsx"));
 // 読めなかったときは、前に選んだ香盤表・カット表が残っていること（最後に読み取った縦のカット絵で書き出す）
 const last = cases.at(-1);
 const kept = engine.exportPdf(last.rows, last.format, false);
