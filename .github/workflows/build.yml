@@ -1,0 +1,114 @@
+# Mac版（Apple Silicon・Intel）とWindows版のアプリを自動でビルドする。
+# - タグ（v0.1.0 など）を push すると、ビルド → 動作確認 → Releases に公開まで行う
+# - Actions タブの「Run workflow」で実行した場合は、Artifacts に置くだけ（公開しない）
+#
+# セキュリティ:
+# - 権限は最小限。ビルド（外部のパッケージを入れて動かす工程）は読み取りだけで、Releases への書き込みは release だけに渡す
+# - 外部の Action はタグではなくコミットのハッシュで固定する（タグは付け替えられるため）。更新するときはハッシュごと差し替える
+name: build
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: mac-apple-silicon
+          - os: macos-15-intel
+            name: mac-intel
+          - os: windows-latest
+            name: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt pyinstaller==6.22.3
+      - run: pyinstaller --noconfirm --clean ekonte.spec
+      - name: 動作確認（画面を出さずに読み取り→書き出し）
+        timeout-minutes: 10  # Windows でエラーのダイアログが出ると止まったままになるため、打ち切る
+        env:
+          QT_QPA_PLATFORM: offscreen
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then BIN=dist/Ekonte.app/Contents/MacOS/Ekonte; else BIN=dist/Ekonte/Ekonte.exe; fi
+          "$BIN" --selftest "サンプル/カット絵_記入例_スキャン.pdf" selftest.pdf
+          "$BIN" --selftest "サンプル/カット絵_記入例_縦_スキャン.pdf" selftest_縦.pdf
+      - name: まとめる
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            ditto -c -k --keepParent dist/Ekonte.app Ekonte-${{ matrix.name }}.zip
+          else
+            7z a Ekonte-${{ matrix.name }}.zip ./dist/Ekonte
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: Ekonte-${{ matrix.name }}
+          path: Ekonte-*.zip
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write  # Releases の作成に必要（この工程だけ）
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - name: タグとバージョン番号が一致しているか確認
+        run: |
+          v=$(python3 -c "import re; print(re.search(r'__version__ = \"(.+?)\"', open('ekonte/__init__.py').read()).group(1))")
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "タグ ${GITHUB_REF_NAME} と ekonte/__init__.py の $v が違います"; exit 1; }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
+        with:
+          files: dist/*.zip
+          body: |
+            ## ダウンロード
+
+            | パソコン | ファイル |
+            |---|---|
+            | Mac（M1 以降の Apple シリコン） | `Ekonte-mac-apple-silicon.zip` |
+            | Mac（Intel） | `Ekonte-mac-intel.zip` |
+            | Windows | `Ekonte-windows.zip` |
+
+            どちらのMacか分からないときは、アップルメニュー →「このMacについて」の「チップ」が Apple M〜 なら Apple シリコン、「プロセッサ」が Intel なら Intel です。
+
+            ## 初めて開くとき
+
+            署名をしていないアプリなので、初回だけ確認が出ます。
+
+            **Mac**
+            1. zip を開き、出てきた Ekonte.app を「アプリケーション」フォルダに移します
+            2. ダブルクリックして「開けません」と出たら「完了」で閉じます
+            3. システム設定 →「プライバシーとセキュリティ」を下までスクロールし、Ekonte の「このまま開く」を押します
+
+            **Windows**
+            1. zip を右クリック →「すべて展開」します（展開せずに開くと動きません）
+            2. Ekonte フォルダの中の Ekonte.exe をダブルクリックします
+            3. 「Windows によって PC が保護されました」と出たら「詳細情報」→「実行」を押します
+
+            使い方は、アプリを開くと画面に表示されます（右上の「？ 使い方」でいつでも見られます）。
+
+            ## 安全のために
+
+            - このページ（github.com/${{ github.repository }}）以外から入手したアプリは開かないでください
+            - アプリは起動時に、このページに新しい版があるかだけを確認します。絵コンテやExcelの中身を外に送ることはありません

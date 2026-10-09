@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ビルド（通常は ~/ekonte-build に出力される）
+build/
+dist/
+
+# 読み取り結果など、作り直せる生成物
+サンプル/カット絵画像/
+selftest*.pdf
+selftest*_サンプル.zip
+
+# 別の企画で使った素材（手元に置くだけで、リポジトリには入れない）
+Check_List_テンプレート(ピンマイク有).xlsx
+日々スケジュール_テンプレート.xlsx
+絵コンテ_テンプレート-2.pdf
+
+# macOS
+.DS_Store
