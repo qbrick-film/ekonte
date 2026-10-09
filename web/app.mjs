@@ -286,6 +286,15 @@ tbody.addEventListener("keydown", (e) => {
     moveSelection(e.key === "ArrowDown" ? 1 : -1);
   }
 });
+// 画像を押すと大きく表示する（もう一度押すか Esc で閉じる）
+for (const id of ["v-picture", "v-mark"]) {
+  $(id).addEventListener("click", (e) => {
+    if (e.target.tagName !== "IMG") return;
+    $("zoom-img").src = e.target.src;
+    $("zoom").showModal();
+  });
+}
+$("zoom").addEventListener("click", () => $("zoom").close());
 $("only-review").addEventListener("change", applyFilter);
 $("b-confirm").addEventListener("click", confirmSelected);
 $("b-next").addEventListener("click", () => selectNextReview());

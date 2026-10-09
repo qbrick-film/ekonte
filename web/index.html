@@ -59,11 +59,11 @@
     </section>
     <section class="preview" aria-label="選んだページの画像">
       <figure>
-        <figcaption>カット絵</figcaption>
+        <figcaption>カット絵 <span class="hint">押すと大きく表示</span></figcaption>
         <div class="frame" id="v-picture"><span>表の行を選ぶと、ここにカット絵が出ます</span></div>
       </figure>
       <figure>
-        <figcaption>マーク欄</figcaption>
+        <figcaption>マーク欄 <span class="hint">押すと大きく表示</span></figcaption>
         <div class="frame" id="v-mark"><span>読み取った番号のマーク欄</span></div>
       </figure>
     </section>
@@ -134,6 +134,8 @@
     <button type="button" class="btn primary" id="samples-close">閉じる</button>
   </div>
 </dialog>
+
+<dialog id="zoom" aria-label="画像の拡大表示"><img id="zoom-img" alt=""></dialog>
 
 <div class="guide" id="guide" hidden></div>
 </body>
