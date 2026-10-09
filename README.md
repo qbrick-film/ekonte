@@ -94,7 +94,9 @@ PDFに描いた**カット絵**のマークシートを読み取り、香盤表�
 
 ```bash
 # Mac（書類フォルダが iCloud 同期の場合、Python環境は必ず iCloud の外に作る ※下記）
-python3 -m venv ~/.venvs/ekonte
+# Python 3.10 以上が必要（Mac に最初から入っている python3 は 3.9 なので、uv などで 3.11 を入れる）
+~/.local/bin/uv python install 3.11
+"$(~/.local/bin/uv python find 3.11)" -m venv ~/.venvs/ekonte
 ~/.venvs/ekonte/bin/pip install -r requirements.txt
 ~/.venvs/ekonte/bin/python app.py
 ```

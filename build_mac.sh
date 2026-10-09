@@ -6,11 +6,29 @@ set -euo pipefail
 cd "$(dirname "$0")"
 VENV="$HOME/.venvs/ekonte"
 BUILD="$HOME/ekonte-build"
+# Python 3.10 以上が必要（Pillow 12 のため。公式ビルドは 3.11）。Mac に最初から入っている python3 は 3.9 なので、
+# uv（~/.local/bin/uv）で入れた 3.11 を優先して使う。無ければ PATH にある 3.10 以上を探す。
+NEW_ENOUGH='import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'
+if [ -x "$VENV/bin/python" ] && ! "$VENV/bin/python" -c "$NEW_ENOUGH"; then
+  echo "Python 環境が古いので作り直します（$("$VENV/bin/python" --version)）"
+  rm -rf "$VENV"
+fi
 if [ ! -x "$VENV/bin/python" ]; then
-  python3 -m venv "$VENV"
+  PY=""
+  for c in "$("$HOME/.local/bin/uv" python find 3.11 2>/dev/null || true)" \
+           "$(command -v python3.12 || true)" "$(command -v python3.11 || true)" "$(command -v python3.10 || true)" "$(command -v python3 || true)"; do
+    if [ -n "$c" ] && [ -x "$c" ] && "$c" -c "$NEW_ENOUGH" 2>/dev/null; then PY="$c"; break; fi
+  done
+  if [ -z "$PY" ]; then
+    echo "Python 3.10 以上が見つかりません。次のどちらかで入れてから、もう一度実行してください:"
+    echo "  ~/.local/bin/uv python install 3.11   （uv がある場合）"
+    echo "  https://www.python.org/downloads/ から Python 3.11 をインストール"
+    exit 1
+  fi
+  "$PY" -m venv "$VENV"
   "$VENV/bin/pip" install --upgrade pip
 fi
-"$VENV/bin/pip" install -r requirements.txt pyinstaller==6.22.3
+"$VENV/bin/pip" install -r requirements.txt pyinstaller==6.22.3 "setuptools>=83"
 "$VENV/bin/pyinstaller" --noconfirm --clean --distpath "$BUILD/dist" --workpath "$BUILD/work" ekonte.spec
 chflags -R nohidden "$BUILD/dist/Ekonte.app"
 echo "完成: $BUILD/dist/Ekonte.app"
