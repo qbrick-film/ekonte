@@ -37,6 +37,8 @@ EXAMPLE = [
 ]
 # 記入例の香盤表の登場人物と、出るシーン
 CAST = [("花子", ("1",)), ("太郎", ("1", "3")), ("男", ("2", "3"))]
+# 香盤表の備考の見出し（部の香盤表では「備考（小道具・セット・メイク・衣装など）」。小道具はカット表に書くので書き分けを示す）
+BIKO_HEADER = "備考（セット・メイク・衣装など。小道具はカット表に）"
 
 HELP = [
     ("香盤表・カット表の書き方", "title"),
@@ -48,11 +50,12 @@ HELP = [
     ("  ソフトは絵コンテ（PDF）と一緒に、香盤表（Excel）も書き出します。シーンごとのカット数・時間・小道具・カメラ・機材を", None),
     ("  カット表から自動でまとめるので、同じことを2か所に書く必要はありません。", None),
     ("", None),
-    ("■ 小道具・カメラ・機材はカット表に書きます", "head"),
-    ("  香盤表の備考にも同じものを書いた場合は、絵コンテ・書き出す香盤表には1回だけ載ります（「、」で区切って書いたもの）。", None),
+    ("■ 小道具・カメラ・機材はカット表に、セット・メイク・衣装などは香盤表の備考に書きます", "head"),
+    ("  香盤表の備考は、シーンの全カットの NOTE に「備考: …」として入ります。", None),
+    ("  うっかり備考にも小道具を書いた場合は、絵コンテ・書き出す香盤表には1回だけ載ります（「、」で区切って書いたもの）。", None),
     ("", None),
     ("■ 香盤表の書き方", "head"),
-    ("  #S にシーン番号を書き、場面・L/LS・D/N・ロケ地・備考を書きます。", None),
+    ("  #S にシーン番号を書き、場面・L/LS・D/N・ロケ地・備考を書きます。備考には小道具以外（セット・メイク・衣装など）を書きます。", None),
     ("  登場人物の列は、見出しに役の名前（例: 花子）、その上の段に役者の名前を書き、出るシーンに ○ を付けます。", None),
     ("  場面・L/LS・D/N・ロケ地はシーンの最初のカットの NOTE に、備考はシーンの全カットの NOTE に入ります。", None),
     ("  別のファイルの香盤表を使うときは、そのシートをこのファイルにコピーします。", None),
@@ -88,6 +91,14 @@ HELP = [
 ]
 
 
+def _biko_header(ws):
+    """香盤表の備考の見出しを、書き分け（小道具はカット表に）が分かるものにする。"""
+    head = next(c for row in ws.iter_rows(max_row=30) for c in row if c.value == "#S")
+    for c in ws[head.row]:
+        if str(c.value or "").startswith("備考"):
+            c.value = BIKO_HEADER
+
+
 def _example_kouban(ws):
     """記入例の香盤表に、タイトルと登場人物（出るシーンに ○）を書き入れる。"""
     cells = [c for row in ws.iter_rows(max_row=30) for c in row if c.value is not None]
@@ -108,6 +119,7 @@ def build(path, example=True):
     wb = openpyxl.load_workbook(samples.path_of(samples.KOUBAN_BASE[example]))
     kouban = wb.worksheets[0]
     kouban.title = "香盤表"
+    _biko_header(kouban)
     if example:
         _example_kouban(kouban)
     ws = wb.create_sheet("カット表")
